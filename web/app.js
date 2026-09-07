@@ -2,47 +2,45 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const titles = {
-  overview: "运行总览",
-  review: "发起审查",
-  tasks: "任务中心",
-  skills: "Skill 注册中心",
-  evolution: "演进实验室",
+  inbox: "PR Inbox",
+  review: "New Review",
+  workspace: "Review Workspace",
+  packs: "Review Packs",
+  benchmark: "Benchmark Lab",
 };
-
 const stateLabels = {
-  PENDING: "等待中",
-  PLANNING: "规划中",
-  EXECUTING: "执行中",
-  REVIEWING: "汇总中",
-  SUCCESS: "已完成",
-  FAILED: "失败",
-  CANCELLED: "已取消",
+  PENDING: "等待中", PLANNING: "范围分析", EXECUTING: "验证中",
+  REVIEWING: "汇总中", SUCCESS: "已完成", FAILED: "失败", CANCELLED: "已取消",
 };
-
+const feedbackLabels = { false_positive: "误报", missed_issue: "漏报", bad_fix: "坏修复", accepted: "已接受" };
 let selectedTask = null;
 let selectedTaskData = null;
-let accessToken = localStorage.getItem("evoagent_token") || "";
+let accessToken = localStorage.getItem("diffprism_token") || localStorage.getItem("evoagent_token") || "";
 let toastTimer = null;
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 function escapeHtml(value) {
   const node = document.createElement("div");
-  node.textContent = value ?? "";
+  node.textContent = value == null ? "" : String(value);
   return node.innerHTML;
 }
 
 function formatTime(value) {
   if (!value) return "时间未知";
   const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? String(value)
-    : new Intl.DateTimeFormat("zh-CN", {
-        month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
-      }).format(date);
+  return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).format(date);
 }
 
-function formatJson(value) {
-  return JSON.stringify(value, null, 2);
+function formatJson(value) { return JSON.stringify(value, null, 2); }
+
+function renderDiagnosticJson(value) { $("#task-report").textContent = formatJson(value); }
+
+function listValues(value) {
+  if (Array.isArray(value)) return value.length ? value.map((item) => typeof item === "object" ? formatJson(item) : String(item)) : ["None recorded"];
+  if (value && typeof value === "object") return Object.entries(value).map(([key, item]) => `${key}: ${typeof item === "object" ? formatJson(item) : item}`);
+  return [value || "None recorded"];
 }
 
 async function api(path, options = {}) {
@@ -51,17 +49,13 @@ async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers });
   const contentType = response.headers.get("content-type") || "";
   const data = contentType.includes("json") ? await response.json() : await response.text();
-
   if (response.status === 401) {
     $("#login-overlay").classList.remove("hidden");
     $("#logout").classList.add("hidden");
   }
   if (!response.ok) {
-    const plainText = typeof data === "string" && !/<[a-z][\s\S]*>/i.test(data) ? data.trim() : "";
-    const message = typeof data === "object"
-      ? data.error || data.detail
-      : plainText || `请求失败 (${response.status})`;
-    throw new Error(message || response.statusText || "请求失败");
+    const plain = typeof data === "string" && !/<[a-z][\s\S]*>/i.test(data) ? data.trim() : "";
+    throw new Error((typeof data === "object" ? data.error || data.detail : plain) || `请求失败 (${response.status})`);
   }
   return data;
 }
@@ -74,64 +68,45 @@ function toast(message) {
   toastTimer = setTimeout(() => element.classList.remove("show"), 2600);
 }
 
-function setButtonBusy(button, busy, busyText) {
+function setButtonBusy(button, busy, text) {
   if (!button) return;
-  button.setAttribute("aria-busy", String(busy));
   if (busy) {
-    button.dataset.label = button.innerHTML;
+    button.dataset.label = button.textContent;
+    button.textContent = text;
     button.disabled = true;
-    button.textContent = busyText;
   } else {
     button.disabled = false;
-    if (button.dataset.label) button.innerHTML = button.dataset.label;
+    if (button.dataset.label) button.textContent = button.dataset.label;
   }
+  button.setAttribute("aria-busy", String(busy));
 }
 
 function show(view, updateHash = true) {
-  if (!titles[view]) {
-    view = "overview";
-    history.replaceState(null, "", "#overview");
-  }
-  $$(".view").forEach((element) => element.classList.remove("active"));
-  $$(".nav-item").forEach((element) => {
-    const active = element.dataset.view === view;
-    element.classList.toggle("active", active);
-    element.setAttribute("aria-current", active ? "page" : "false");
+  if (!titles[view]) view = "inbox";
+  $$(".view").forEach((item) => item.classList.toggle("active", item.id === `view-${view}`));
+  $$(".nav-item").forEach((item) => {
+    const active = item.dataset.view === view;
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-current", active ? "page" : "false");
   });
-  $(`#view-${view}`).classList.add("active");
   $("#page-title").textContent = titles[view];
-  document.title = `${titles[view]} · EvoAgent`;
+  document.title = `${titles[view]} · DiffPrism`;
   if (updateHash) history.replaceState(null, "", `#${view}`);
-
-  if (view === "tasks") loadTasks();
-  if (view === "skills") loadSkills();
-  if (view === "evolution") loadFailures();
+  if (view === "workspace") loadTasks();
+  if (view === "packs") loadSkills();
+  if (view === "benchmark") loadBenchmark();
   window.scrollTo({ top: 0, behavior: reduceMotion.matches ? "auto" : "smooth" });
 }
 
-$$(".nav-item").forEach((button) => button.addEventListener("click", () => show(button.dataset.view)));
-$$("[data-jump]").forEach((button) => button.addEventListener("click", () => show(button.dataset.jump)));
-window.addEventListener("hashchange", () => show(location.hash.slice(1), false));
-
 function taskRows(tasks) {
-  if (!tasks?.length) {
-    return '<div class="empty-state"><span><b>还没有审查任务</b>提交一个 Diff 开始首次审查</span></div>';
-  }
+  if (!tasks?.length) return '<div class="empty-list">还没有审查任务。先提交一个 diff。</div>';
   return tasks.map((task) => {
     const state = String(task.state || "PENDING").toUpperCase();
-    const repository = escapeHtml(task.repository || "未命名仓库");
-    const pr = task.pull_request ? `PR #${escapeHtml(task.pull_request)}` : "手动审查";
-    return `
-      <button class="task-row" data-task="${escapeHtml(task.id)}" type="button">
-        <span class="task-main">
-          <span class="task-glyph">PR</span>
-          <span class="task-copy">
-            <span class="task-name">${repository}</span>
-            <span class="task-meta"><span>${pr}</span><span>${escapeHtml(formatTime(task.created_at))}</span></span>
-          </span>
-        </span>
-        <span class="status state-${state.toLowerCase()}">${stateLabels[state] || escapeHtml(state)}</span>
-      </button>`;
+    const pr = task.pull_request ? `PR #${task.pull_request}` : "MANUAL DIFF";
+    return `<button class="task-row" data-task="${escapeHtml(task.id)}" type="button">
+      <span class="task-main"><span class="task-glyph">PR</span><span><strong>${escapeHtml(task.repository || "未命名仓库")}</strong><small>${escapeHtml(pr)} · ${escapeHtml(formatTime(task.created_at))}</small></span></span>
+      <span class="status state-${escapeHtml(state.toLowerCase())}">${escapeHtml(stateLabels[state] || state)}</span>
+    </button>`;
   }).join("");
 }
 
@@ -139,231 +114,191 @@ function bindTasks(root) {
   $$("[data-task]", root).forEach((row) => row.addEventListener("click", () => openTask(row.dataset.task)));
 }
 
-function statCard(label, value, note, style, icon) {
-  return `<article class="stat ${style}">
-    <div class="stat-head"><span>${label}</span><i>${icon}</i></div>
-    <b>${value}</b><small>${note}</small>
-  </article>`;
-}
-
-function renderLlmRuntime(llm = {}, runMode = {}) {
-  const enabled = Boolean(llm.enabled);
-  const failed = Boolean(llm.error);
-  const provider = String(llm.provider || "local");
-  const model = String(llm.model || "");
-  const detail = failed
-    ? "暂时无法读取模型配置"
-    : enabled
-      ? `${provider} / ${model || "默认模型"}，参与上下文审查与风险判断`
-      : "未配置模型；agentic 审查暂不可用";
-  const state = failed ? "读取失败" : enabled ? "已启用" : "待配置";
-  const runtime = failed
-    ? "运行时状态未知"
-    : enabled
-      ? `${provider} / ${model || "模型已配置"}`
-      : "agentic / 需要模型配置";
-
-  const chain = $("#execution-chain");
-  if (chain) {
-    const scanner = '<div class="agent-step"><b>01</b><span><strong>Tool / Scanner</strong><small>规则、AST 与代码搜索提供事实</small></span><em>事实</em></div>';
-    const gate = '<i class="flow-line"></i><div class="agent-step"><b>03</b><span><strong>Gate</strong><small>格式、证据、置信度与发布门禁</small></span><em class="done">门禁</em></div>';
-    const llmStep = `<i class="flow-line"></i><div class="agent-step is-active" id="llm-agent-step"><b>02</b><span><strong>4-role LLM Agents</strong><small id="llm-agent-detail">${escapeHtml(detail)}</small></span><em id="llm-agent-state">${escapeHtml(state)}</em></div>`;
-    chain.innerHTML = scanner + llmStep + gate;
-  }
-
-  const step = $("#llm-agent-step");
-  if (step) {
-    step.classList.remove("is-pending");
-    step.classList.toggle("is-active", enabled);
-    step.classList.toggle("is-disabled", !enabled && !failed);
-    step.classList.toggle("is-error", failed);
-    const detailNode = $("#llm-agent-detail");
-    const stateNode = $("#llm-agent-state");
-    if (detailNode) detailNode.textContent = detail;
-    if (stateNode) stateNode.textContent = state;
-  }
-
-  const status = $("#llm-runtime-status");
-  status.className = `runtime-status ${failed ? "is-error" : enabled ? "is-active" : "is-disabled"}`;
-  status.textContent = state;
-  const capability = $("#llm-capability");
-  capability.classList.toggle("is-active", enabled);
-  capability.classList.toggle("is-disabled", !enabled && !failed);
-  capability.classList.toggle("is-error", failed);
-  $("#llm-capability-detail").textContent = detail;
-  $("#llm-runtime-model").textContent = runtime;
+function statCard(label, value, note) {
+  return `<article class="stat"><p>${escapeHtml(label)}</p><b>${escapeHtml(value)}</b><small>${escapeHtml(note)}</small></article>`;
 }
 
 async function loadDashboard() {
   try {
     const data = await api("/api/dashboard");
-    renderLlmRuntime(data.llm, data.run_mode);
-    const modeSelect = $("#review-mode");
-    if (modeSelect) {
-      modeSelect.value = "agentic";
-      modeSelect.disabled = !data.llm?.enabled;
-    }
-    $("#system-status").textContent = `${data.queue} · ${data.orchestrator}`;
+    $("#system-status").textContent = `${data.queue || "runtime"} · ${data.orchestrator || "DiffPrism"}`;
+    const mode = $("#review-mode");
+    mode.disabled = !data.llm?.enabled;
+    mode.title = data.llm?.enabled ? "" : "需要配置模型后运行 agentic 审查";
     const stats = data.stats || {};
-    const rate = Math.round(Number(stats.success_rate || 0) * 100);
+    const rate = `${Math.round(Number(stats.success_rate || 0) * 100)}%`;
     $("#stats").innerHTML = [
-      statCard("总任务", stats.tasks_total ?? 0, "累计审查任务", "", "ALL"),
-      statCard("已完成", stats.tasks_success ?? 0, "通过质量门禁", "success", "OK"),
-      statCard("失败", stats.tasks_failed ?? 0, "需要进一步处理", "failed", "ERR"),
-      statCard("成功率", `${rate}%`, "全部任务成功率", "rate", "RATE"),
-      statCard("待处理案例", stats.unresolved_failure_cases ?? 0, "未解决反馈", "feedback", "OPEN"),
-      statCard("活跃 Skills", stats.active_skill_versions ?? 0, "当前生效版本", "skills", "SK"),
+      statCard("TOTAL REVIEWS", stats.tasks_total ?? 0, "累计任务"),
+      statCard("VERIFIED", stats.tasks_success ?? 0, "完成证据门禁"),
+      statCard("SUCCESS RATE", rate, "任务执行成功率"),
+      statCard("OPEN SIGNALS", stats.unresolved_failure_cases ?? 0, "待回放反馈"),
     ].join("");
-    $("#recent-tasks").innerHTML = taskRows((data.tasks || []).slice(0, 5));
+    $("#recent-tasks").innerHTML = taskRows((data.tasks || []).slice(0, 6));
     bindTasks($("#recent-tasks"));
   } catch (error) {
-    renderLlmRuntime({ error: true }, {});
     $("#system-status").textContent = "服务连接异常";
-    $("#stats").innerHTML = '<div class="empty-state"><span><b>暂时无法读取数据</b>请检查服务状态后重试</span></div>';
-    $("#recent-tasks").innerHTML = '<div class="empty-state"><span>数据加载失败</span></div>';
+    $("#stats").innerHTML = '<div class="empty-list">无法读取工作区数据。</div>';
+    $("#recent-tasks").innerHTML = '<div class="empty-list">任务加载失败。</div>';
     toast(error.message);
   }
 }
 
 async function loadTasks() {
   const root = $("#all-tasks");
-  root.innerHTML = '<div class="list-loading"></div><div class="list-loading"></div>';
+  root.innerHTML = '<div class="skeleton row"></div>';
   try {
     const data = await api("/api/tasks");
     root.innerHTML = taskRows(data.tasks || []);
     bindTasks(root);
   } catch (error) {
-    root.innerHTML = '<div class="empty-state"><span>任务加载失败</span></div>';
+    root.innerHTML = '<div class="empty-list">任务加载失败。</div>';
     toast(error.message);
   }
 }
 
+function findingCard(finding, index) {
+  const severity = String(finding?.severity || "medium").toLowerCase();
+  const verification = finding?.verification || "verified";
+  return `<article class="finding-card severity-${escapeHtml(severity)}">
+    <header><span class="finding-number">#${index + 1}</span><div><strong>${escapeHtml(finding?.title || "Untitled finding")}</strong><p>${escapeHtml(finding?.rule_id || "UNCLASSIFIED")} · ${escapeHtml(severity.toUpperCase())}</p></div><span class="status state-success">${escapeHtml(verification)}</span></header>
+    <p class="finding-location">${escapeHtml(finding?.path || "unknown")}:${escapeHtml(finding?.line || "?")}</p>
+    <dl><dt>Trigger</dt><dd>${escapeHtml(finding?.trigger || "Not established")}</dd><dt>Evidence</dt><dd><code>${escapeHtml(finding?.evidence || "Not established")}</code></dd><dt>Impact</dt><dd>${escapeHtml(finding?.impact || finding?.explanation || "Not established")}</dd><dt>Suggested fix</dt><dd>${escapeHtml(finding?.fix || "Not provided")}</dd><dt>Suggested verification</dt><dd>${escapeHtml(finding?.test || "Not provided")}</dd></dl>
+    ${finding?.examiner_reason ? `<p class="examiner-note"><b>Examiner:</b> ${escapeHtml(finding.examiner_reason)}</p>` : ""}
+  </article>`;
+}
+
+function keyValueRows(value) {
+  const entries = value && typeof value === "object" ? Object.entries(value) : [];
+  if (!entries.length) return '<p class="muted">No structured data recorded.</p>';
+  return `<dl class="fact-list">${entries.map(([key, item]) => `<dt>${escapeHtml(key.replaceAll("_", " "))}</dt><dd>${listValues(item).map(escapeHtml).join("<br>")}</dd>`).join("")}</dl>`;
+}
+
+function renderReviewWorkspace(task) {
+  const report = task?.report || null;
+  $("#workspace-empty").classList.add("hidden");
+  $("#workspace-report").classList.remove("hidden");
+  $("#workspace-identity").innerHTML = `<p class="eyebrow">${escapeHtml(task?.id || "TASK")}</p><h2>${escapeHtml(task?.repository || "Unknown repository")}</h2><p>${task?.pull_request ? `Pull Request #${escapeHtml(task.pull_request)}` : "Manual diff review"} · ${escapeHtml(formatTime(task?.created_at))}</p>`;
+  const state = String(task?.state || "PENDING").toUpperCase();
+  const stateNode = $("#workspace-state");
+  stateNode.className = `status state-${state.toLowerCase()}`;
+  stateNode.textContent = stateLabels[state] || state;
+  $("#create-fix").classList.toggle("hidden", !(report && task?.pull_request));
+  renderDiagnosticJson(task);
+
+  if (!report) {
+    $("#verdict-card").innerHTML = '<p class="eyebrow">VERDICT</p><h3>Review in progress</h3><p class="muted">结构化报告将在任务完成后出现。</p>';
+    $("#change-map").innerHTML = '<p class="eyebrow">CHANGE MAP</p><h3>Pending</h3><p class="muted">Scope Mapper 尚未提交范围。</p>';
+    $("#finding-list").innerHTML = '<div class="empty-list">没有可显示的已验证发现。</div>';
+    $("#finding-count").textContent = "0";
+    $("#agent-trail").innerHTML = '<p class="eyebrow">AGENT TRAIL</p><h3>Runtime trace</h3>' + keyValueRows(task?.trace || []);
+    $("#execution-facts").innerHTML = '<p class="eyebrow">EXECUTION</p><h3>Pending</h3>';
+    $("#feedback-panel").classList.add("hidden");
+    return;
+  }
+
+  const verdict = report.verdict || {};
+  const decision = String(verdict.decision || (report.findings?.length ? "review" : "pass")).toLowerCase();
+  $("#verdict-card").innerHTML = `<p class="eyebrow">MERGE VERDICT</p><div class="verdict-line"><h3>${escapeHtml(decision.toUpperCase())}</h3><span class="verdict-badge verdict-${escapeHtml(decision)}">${escapeHtml(report.risk || "unknown risk")}</span></div><p>${escapeHtml(verdict.reason || report.summary || "No rationale recorded")}</p>${verdict.required_actions ? `<h4>Required actions</h4><ul>${listValues(verdict.required_actions).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}`;
+  $("#change-map").innerHTML = '<p class="eyebrow">CHANGE MAP</p><h3>Impact surface</h3>' + keyValueRows(report.change_map);
+  const findings = Array.isArray(report.findings) ? report.findings : [];
+  $("#finding-count").textContent = String(findings.length);
+  $("#finding-list").innerHTML = findings.length ? findings.map(findingCard).join("") : '<div class="empty-list success-empty">Evidence Examiner did not verify an actionable defect.</div>';
+  const trail = Array.isArray(task.trace) ? task.trace : [];
+  $("#agent-trail").innerHTML = `<p class="eyebrow">AGENT TRAIL</p><h3>Review progression</h3><ol class="trail">${trail.map((item) => `<li><b>${escapeHtml(item.state || "STEP")}</b><span>${escapeHtml(item.message || "")}</span><small>${escapeHtml(formatTime(item.created_at))}</small></li>`).join("") || "<li>No trace recorded.</li>"}</ol>`;
+  $("#execution-facts").innerHTML = '<p class="eyebrow">EXECUTION FACTS</p><h3>Runtime evidence</h3>' + keyValueRows(report.execution);
+  $("#feedback-panel").classList.toggle("hidden", task.state !== "SUCCESS");
+  populateFeedbackFindings(findings);
+}
+
 async function openTask(id) {
-  show("tasks");
-  $("#task-report").textContent = "正在加载任务报告…";
-  $("#feedback-panel").classList.add("hidden");
+  show("workspace");
   try {
     const task = await api(`/v1/tasks/${encodeURIComponent(id)}`);
     selectedTask = id;
     selectedTaskData = task;
-    $("#task-report").textContent = formatJson(task);
-    $("#create-fix").classList.toggle("hidden", !(task.report && task.pull_request));
-    const feedbackReady = task.state === "SUCCESS" && task.report;
-    $("#feedback-panel").classList.toggle("hidden", !feedbackReady);
-    if (feedbackReady) {
-      populateFeedbackFindings(task.report.findings || []);
-      await loadTaskFeedback(id);
-    }
+    renderReviewWorkspace(task);
+    if (task.state === "SUCCESS" && task.report) await loadTaskFeedback(id);
   } catch (error) {
-    $("#task-report").textContent = error.message;
-    selectedTaskData = null;
+    $("#workspace-empty").classList.remove("hidden");
+    $("#workspace-empty").innerHTML = `<h3>无法打开任务</h3><p>${escapeHtml(error.message)}</p>`;
+    $("#workspace-report").classList.add("hidden");
   }
 }
 
-const feedbackLabels = {
-  false_positive: "误报",
-  missed_issue: "漏报",
-  bad_fix: "坏修复",
-  accepted: "已接受",
-};
-
 function populateFeedbackFindings(findings) {
-  const select = $("#feedback-finding");
-  select.innerHTML = '<option value="">不关联已有结论</option>' + findings.map((finding, index) => {
-    const identity = `${finding.rule_id || "未命名规则"} · ${finding.path || "未知文件"}:${finding.line || "?"}`;
-    return `<option value="${index}">${escapeHtml(identity)}</option>`;
-  }).join("");
+  $("#feedback-finding").innerHTML = '<option value="">不关联</option>' + findings.map((finding, index) => `<option value="${index}">${escapeHtml(`${finding.rule_id || "规则"} · ${finding.path || "文件"}:${finding.line || "?"}`)}</option>`).join("");
   $("#feedback-result").textContent = "";
 }
 
 function renderTaskFeedback(cases) {
   const root = $("#task-feedback-history");
-  if (!cases.length) {
-    root.innerHTML = '<p class="feedback-empty">尚无反馈。提交后，它会在这里保留并进入后续评测。</p>';
-    return;
-  }
-  root.innerHTML = `<p class="list-section-label">本任务反馈</p>${cases.map((item) => {
-    const payload = item.payload || {};
-    const finding = payload.finding || {};
-    const reference = finding.rule_id
-      ? `${finding.rule_id}${finding.path ? ` · ${finding.path}:${finding.line || "?"}` : ""}`
-      : "未关联审查结论";
-    return `<div class="feedback-case">
-      <span class="feedback-case-type">${escapeHtml(feedbackLabels[item.category] || item.category)}</span>
-      <span class="feedback-case-copy"><b>${escapeHtml(reference)}</b><small>${escapeHtml(payload.note || "未填写说明")}</small></span>
-      <span class="status ${item.resolved ? "state-success" : "state-pending"}">${item.resolved ? "已解决" : "待评测"}</span>
-    </div>`;
-  }).join("")}`;
+  root.innerHTML = cases?.length ? `<h4>本任务反馈</h4>${cases.map((item) => `<div class="feedback-case"><b>${escapeHtml(feedbackLabels[item.category] || item.category)}</b><span>${escapeHtml((item.payload || {}).note || "无说明")}</span><small>${item.resolved ? "已解决" : "待评测"}</small></div>`).join("")}` : '<p class="muted">尚无人工反馈。</p>';
 }
 
 async function loadTaskFeedback(taskId) {
-  const root = $("#task-feedback-history");
-  root.innerHTML = '<p class="feedback-empty">正在读取本任务反馈…</p>';
   try {
     const data = await api(`/v1/tasks/${encodeURIComponent(taskId)}/feedback`);
     if (selectedTask === taskId) renderTaskFeedback(data.cases || []);
   } catch (error) {
-    root.innerHTML = `<p class="feedback-empty">无法读取反馈历史：${escapeHtml(error.message)}</p>`;
+    $("#task-feedback-history").innerHTML = `<p class="muted">反馈历史不可用：${escapeHtml(error.message)}</p>`;
   }
+}
+
+function reviewPackCard(skill) {
+  const permissions = skill.permissions || skill.allowed_tools || [];
+  return `<article class="pack-card"><div class="pack-top"><span class="pack-glyph">${escapeHtml((skill.display_name || skill.name || "RP").slice(0, 2).toUpperCase())}</span><span class="status ${skill.sandboxed ? "neutral" : "state-success"}">${escapeHtml(skill.status_label || "Active")}</span></div><h3>${escapeHtml(skill.display_name || skill.name)}</h3><p>${escapeHtml(skill.scope || skill.description || "No scope description available")}</p><dl><dt>Machine ID</dt><dd>${escapeHtml(skill.name)}</dd><dt>Version</dt><dd>${escapeHtml(skill.version || "1")}</dd><dt>Source</dt><dd>${escapeHtml(skill.source || "unknown")}</dd><dt>Allowed tools</dt><dd>${escapeHtml(permissions.length)}</dd></dl></article>`;
 }
 
 async function loadSkills() {
   const root = $("#skill-list");
-  root.innerHTML = '<div class="skill-card loading"></div><div class="skill-card loading"></div>';
+  root.innerHTML = '<div class="skeleton card"></div><div class="skeleton card"></div>';
   try {
     const data = await api("/api/skills");
-    renderLlmRuntime(data.llm);
-    const skills = (data.skills || []).filter((skill) => skill.name !== "llm-review");
-    root.innerHTML = skills.length ? skills.map((skill) => `
-      <article class="skill-card">
-        <span class="skill-label">${skill.sandboxed ? "SANDBOXED SKILL" : "ACTIVE SKILL"}</span>
-        <h3>${escapeHtml(skill.name)}</h3>
-        <p>${escapeHtml(skill.description || "暂无能力描述")}</p>
-        <span class="skill-meta">v${escapeHtml(skill.version)} · ${escapeHtml(skill.source)}</span>
-      </article>`).join("") : '<div class="empty-state"><span><b>尚未加载 Skill</b>扫描目录以加载可用能力</span></div>';
+    const llm = data.llm || {};
+    const enabled = Boolean(llm.enabled);
+    $("#llm-runtime-status").className = `status ${enabled ? "state-success" : "neutral"}`;
+    $("#llm-runtime-status").textContent = enabled ? "已配置" : "待配置";
+    $("#llm-runtime-model").textContent = enabled ? `${llm.provider} / ${llm.model || "default"}` : "Agentic mode unavailable";
+    $("#llm-capability-detail").textContent = enabled ? "为四角色协议提供上下文推理；工具负责提供可核验证据。" : "配置 DIFFPRISM_LLM_* 后启用完整四角色审查。";
+    const skills = (data.skills || []).filter((item) => item.name !== "llm-review");
+    root.innerHTML = skills.length ? skills.map(reviewPackCard).join("") : '<div class="empty-list">未发现 Review Pack。</div>';
   } catch (error) {
-    renderLlmRuntime({ error: true });
-    root.innerHTML = '<div class="empty-state"><span>Skills 加载失败</span></div>';
-    toast(error.message);
+    root.innerHTML = `<div class="empty-list">Review Packs 加载失败：${escapeHtml(error.message)}</div>`;
   }
 }
 
-async function loadFailures() {
+function metricRows(metrics) {
+  const entries = Object.entries(metrics || {});
+  return entries.length ? entries.map(([name, value]) => `<span><small>${escapeHtml(name.replaceAll("_", " "))}</small><b>${escapeHtml(value)}</b></span>`).join("") : '<p class="muted">No public metrics recorded.</p>';
+}
+
+function renderBenchmark(data) {
+  const dataset = data?.dataset || {};
+  const splits = dataset.splits || {};
+  const ready = Boolean(dataset.production_ready);
+  $("#benchmark-summary").innerHTML = `<article class="dataset-card"><div><p class="eyebrow">DATASET</p><h3>${escapeHtml(dataset.name || "Unknown benchmark")}</h3><p>${escapeHtml(dataset.cases || 0)} cases · ${escapeHtml(dataset.repositories || 0)} repositories · ${escapeHtml(dataset.findings || 0)} findings</p></div><span class="status ${ready ? "state-success" : "state-pending"}">${ready ? "PRODUCTION READY" : "SYNTHETIC FIXTURE"}</span><dl><dt>Validation</dt><dd>${escapeHtml(splits.validation || 0)}</dd><dt>Holdout</dt><dd>${escapeHtml(splits.holdout || 0)}</dd><dt>SHA-256</dt><dd><code>${escapeHtml(dataset.file_sha256 || "unknown")}</code></dd><dt>Limitation</dt><dd>${escapeHtml(dataset.limitation || "None recorded")}</dd></dl></article>`;
+  const arms = Object.entries(data?.arms || {});
+  const runs = data?.runs || [];
+  $("#benchmark-runs").innerHTML = `<div class="arm-grid">${arms.map(([id, label]) => `<div class="arm"><small>${escapeHtml(id)}</small><strong>${escapeHtml(label)}</strong></div>`).join("")}</div>${runs.length ? `<div class="run-list">${runs.map((run) => `<article><div><span class="status ${String(run.decision).toLowerCase().includes("activ") ? "state-success" : "neutral"}">${escapeHtml(run.decision || "unknown")}</span><h4>${escapeHtml(run.arm_display_name || run.arm)}</h4><small>${escapeHtml(formatTime(run.created_at))}</small></div><div class="metric-strip">${metricRows(run.metrics)}</div></article>`).join("")}</div>` : '<div class="empty-list">尚无可公开的评测运行。数据集身份已固定，可运行脚本生成结果。</div>'}`;
+}
+
+async function loadBenchmark() {
   try {
-    const [failuresData, status, runsData] = await Promise.all([
-      api("/api/failures"),
-      api("/v1/evolution/status"),
-      api("/v1/evolution/runs?limit=5"),
+    const [benchmark, status, failures] = await Promise.all([
+      api("/api/benchmark"), api("/v1/evolution/status"), api("/api/failures").catch(() => ({ cases: [] })),
     ]);
+    renderBenchmark(benchmark);
     $("#evolution-status").textContent = formatJson(status);
-    const cases = failuresData.cases || [];
-    const runs = runsData.runs || [];
-    const failureHtml = cases.length
-      ? cases.slice(0, 8).map((item) => `
-          <div class="task-row">
-            <span class="task-main"><span class="task-glyph">FC</span><span class="task-copy">
-              <span class="task-name">${escapeHtml(feedbackLabels[item.category] || item.category)}</span>
-              <span class="task-meta"><span>${escapeHtml(item.task_id)}</span><span>${escapeHtml((item.payload || {}).note || "无说明")}</span></span>
-            </span></span>
-            <span class="status ${item.resolved ? "state-success" : "state-pending"}">${item.resolved ? "已解决" : "待处理"}</span>
-          </div>`).join("")
-      : '<div class="empty-state"><span><b>暂无失败反馈</b>系统当前没有未处理案例</span></div>';
-    const historyHtml = runs.length
-      ? `<p class="list-section-label">最近评测</p>${runs.map((run) => `
-          <div class="task-row">
-            <span class="task-main"><span class="task-glyph">V${escapeHtml(run.candidate_version)}</span><span class="task-copy">
-              <span class="task-name">${escapeHtml(run.decision)}</span>
-              <span class="task-meta">${Number(run.candidate_score).toFixed(3)} vs ${Number(run.baseline_score).toFixed(3)}</span>
-            </span></span>
-          </div>`).join("")}`
-      : "";
-    $("#failure-list").innerHTML = failureHtml + historyHtml;
+    const cases = failures.cases || [];
+    $("#failure-list").innerHTML = cases.length ? `<h4>待评测反馈</h4>${cases.slice(0, 6).map((item) => `<div class="feedback-case"><b>${escapeHtml(feedbackLabels[item.category] || item.category)}</b><span>${escapeHtml((item.payload || {}).note || "无说明")}</span><small>${item.resolved ? "已解决" : "待处理"}</small></div>`).join("")}` : '<p class="muted">没有待处理反馈。</p>';
   } catch (error) {
-    $("#evolution-status").textContent = "暂时无法读取评测状态。";
-    $("#failure-list").innerHTML = '<div class="empty-state"><span>反馈加载失败</span></div>';
-    toast(error.message);
+    $("#benchmark-summary").innerHTML = `<div class="empty-list">Benchmark 加载失败：${escapeHtml(error.message)}</div>`;
   }
 }
+
+$$('.nav-item').forEach((button) => button.addEventListener("click", () => show(button.dataset.view)));
+$$('[data-jump]').forEach((button) => button.addEventListener("click", () => show(button.dataset.jump)));
+window.addEventListener("hashchange", () => show(location.hash.slice(1), false));
 
 $("#review-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -372,25 +307,17 @@ $("#review-form").addEventListener("submit", async (event) => {
   const values = new FormData(form);
   const body = { repository: values.get("repository"), diff: values.get("diff"), mode: values.get("mode") };
   if (values.get("pull_request")) body.pull_request = Number(values.get("pull_request"));
-  const asyncQuery = values.get("async") ? "?async=true" : "";
   const output = $("#review-result");
-  output.classList.remove("empty");
-  output.textContent = "正在提交审查任务…";
   setButtonBusy(button, true, "正在提交…");
   try {
-    const data = await api(`/v1/reviews${asyncQuery}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    output.textContent = formatJson(data);
-    toast("审查任务已成功提交");
-    loadDashboard();
-  } catch (error) {
-    output.textContent = error.message;
-  } finally {
-    setButtonBusy(button, false);
-  }
+    const data = await api(`/v1/reviews${values.get("async") ? "?async=true" : ""}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const taskId = data.task_id || data.id;
+    output.className = "result";
+    output.innerHTML = `<strong>任务已接收</strong><br>${escapeHtml(taskId || "已完成同步审查")}<br>${escapeHtml(data.state || "QUEUED")}`;
+    await loadDashboard();
+    if (taskId && !values.get("async")) await openTask(taskId);
+    toast("审查任务已提交");
+  } catch (error) { output.textContent = error.message; } finally { setButtonBusy(button, false); }
 });
 
 $("#create-fix").addEventListener("click", async () => {
@@ -398,28 +325,12 @@ $("#create-fix").addEventListener("click", async () => {
   const button = $("#create-fix");
   setButtonBusy(button, true, "正在创建…");
   try {
-    const data = await api(`/v1/tasks/${encodeURIComponent(selectedTask)}/fix`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    $("#task-report").textContent = formatJson(data);
-    toast("修复分支已创建");
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    setButtonBusy(button, false);
-  }
+    await api(`/v1/tasks/${encodeURIComponent(selectedTask)}/fix`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    toast("安全修复分支已创建");
+  } catch (error) { toast(error.message); } finally { setButtonBusy(button, false); }
 });
 
-$("#feedback-category").addEventListener("change", (event) => {
-  const missed = event.target.value === "missed_issue";
-  $("#feedback-missed-fields").classList.toggle("hidden", !missed);
-  $("#feedback-hint").textContent = missed
-    ? "补充规则和位置可让候选评测学习更精确的检查点。"
-    : "提交后可在本任务和演进实验室查看状态。";
-});
-
+$("#feedback-category").addEventListener("change", (event) => $("#feedback-missed-fields").classList.toggle("hidden", event.target.value !== "missed_issue"));
 $("#feedback-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!selectedTask || !selectedTaskData?.report) return;
@@ -431,156 +342,52 @@ $("#feedback-form").addEventListener("submit", async (event) => {
   const findings = selectedTaskData.report.findings || [];
   const finding = selectedIndex === "" ? {} : { ...(findings[Number(selectedIndex)] || {}) };
   if (category === "missed_issue") {
-    const ruleId = String(values.get("rule_id") || "").trim();
-    const path = String(values.get("path") || "").trim();
-    const line = Number(values.get("line"));
-    if (ruleId) finding.rule_id = ruleId;
-    if (path) finding.path = path;
-    if (Number.isInteger(line) && line > 0) finding.line = line;
+    if (String(values.get("rule_id") || "").trim()) finding.rule_id = String(values.get("rule_id")).trim();
+    if (String(values.get("path") || "").trim()) finding.path = String(values.get("path")).trim();
+    if (Number(values.get("line")) > 0) finding.line = Number(values.get("line"));
   }
-  const output = $("#feedback-result");
-  output.textContent = "正在保存反馈…";
-  setButtonBusy(button, true, "正在提交…");
+  setButtonBusy(button, true, "记录中…");
   try {
-    const data = await api(`/v1/tasks/${encodeURIComponent(selectedTask)}/feedback`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        category,
-        finding: Object.keys(finding).length ? finding : null,
-        note: String(values.get("note") || "").trim(),
-      }),
-    });
-    output.textContent = `${feedbackLabels[data.category] || data.category}已记录；可在演进实验室等待候选评测。`;
+    const data = await api(`/v1/tasks/${encodeURIComponent(selectedTask)}/feedback`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category, finding: Object.keys(finding).length ? finding : null, note: String(values.get("note") || "").trim() }) });
+    $("#feedback-result").textContent = `${feedbackLabels[data.category] || data.category}已记录。`;
     form.reset();
     $("#feedback-missed-fields").classList.add("hidden");
-    $("#feedback-hint").textContent = "提交后可在本任务和演进实验室查看状态。";
-    await Promise.all([loadTaskFeedback(selectedTask), loadDashboard()]);
-    toast("反馈已记录");
-  } catch (error) {
-    output.textContent = `提交失败：${error.message}`;
-  } finally {
-    setButtonBusy(button, false);
-  }
+    await loadTaskFeedback(selectedTask);
+  } catch (error) { $("#feedback-result").textContent = `提交失败：${error.message}`; } finally { setButtonBusy(button, false); }
 });
 
 $("#reload-skills").addEventListener("click", async () => {
-  const button = $("#reload-skills");
-  setButtonBusy(button, true, "正在扫描…");
-  try {
-    await api("/v1/skills/reload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    await loadSkills();
-    toast("Skills 已重新加载");
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    setButtonBusy(button, false);
-  }
+  const button = $("#reload-skills"); setButtonBusy(button, true, "扫描中…");
+  try { await api("/v1/skills/reload", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); await loadSkills(); toast("Review Packs 已重新加载"); } catch (error) { toast(error.message); } finally { setButtonBusy(button, false); }
 });
 
 $("#evolution-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const button = $('button[type="submit"]', form);
-  const values = new FormData(form);
-  setButtonBusy(button, true, "正在评测…");
-  try {
-    const data = await api("/v1/evolution/propose", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ skill_name: values.get("skill_name"), prompt: values.get("prompt") }),
-    });
-    $("#evolution-result").classList.remove("empty");
-    $("#evolution-result").textContent = formatJson(data);
-    toast("新旧版本回放评测已完成");
-    loadFailures();
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    setButtonBusy(button, false);
-  }
+  event.preventDefault(); const form = event.currentTarget; const button = $('button[type="submit"]', form); const values = new FormData(form); setButtonBusy(button, true, "评测中…");
+  try { const data = await api("/v1/evolution/propose", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skill_name: values.get("skill_name"), prompt: values.get("prompt") }) }); $("#evolution-result").className = "result"; $("#evolution-result").textContent = formatJson(data); await loadBenchmark(); } catch (error) { toast(error.message); } finally { setButtonBusy(button, false); }
 });
 
 $("#auto-evolve").addEventListener("click", async () => {
-  const button = $("#auto-evolve");
-  setButtonBusy(button, true, "正在生成…");
-  try {
-    const data = await api("/v1/evolution/auto", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ skill_name: "llm-review" }),
-    });
-    $("#evolution-result").classList.remove("empty");
-    $("#evolution-result").textContent = formatJson(data);
-    toast("反馈候选评测已完成");
-    loadFailures();
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    setButtonBusy(button, false);
-  }
+  const button = $("#auto-evolve"); setButtonBusy(button, true, "生成中…");
+  try { const data = await api("/v1/evolution/auto", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skill_name: "llm-review" }) }); $("#evolution-result").className = "result"; $("#evolution-result").textContent = formatJson(data); await loadBenchmark(); } catch (error) { toast(error.message); } finally { setButtonBusy(button, false); }
 });
 
 $("#refresh").addEventListener("click", async () => {
-  const view = location.hash.slice(1) || "overview";
-  if (view === "overview") await loadDashboard();
-  else if (view === "tasks") await loadTasks();
-  else if (view === "skills") await loadSkills();
-  else if (view === "evolution") await loadFailures();
-  else await loadDashboard();
+  const view = location.hash.slice(1) || "inbox";
+  if (view === "workspace") await loadTasks(); else if (view === "packs") await loadSkills(); else if (view === "benchmark") await loadBenchmark(); else await loadDashboard();
   toast("数据已刷新");
 });
 
 $("#login-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const button = $('button[type="submit"]', form);
-  const values = new FormData(form);
-  setButtonBusy(button, true, "正在登录…");
-  try {
-    const data = await api("/v1/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: values.get("username"),
-        password: values.get("password"),
-        tenant_id: values.get("tenant_id"),
-      }),
-    });
-    accessToken = data.access_token;
-    localStorage.setItem("evoagent_token", accessToken);
-    $("#login-overlay").classList.add("hidden");
-    $("#logout").classList.remove("hidden");
-    $("#login-error").textContent = "";
-    await loadDashboard();
-  } catch (error) {
-    $("#login-error").textContent = error.message;
-  } finally {
-    setButtonBusy(button, false);
-  }
+  event.preventDefault(); const form = event.currentTarget; const button = $('button[type="submit"]', form); const values = new FormData(form); setButtonBusy(button, true, "登录中…");
+  try { const data = await api("/v1/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: values.get("username"), password: values.get("password"), tenant_id: values.get("tenant_id") }) }); accessToken = data.access_token; localStorage.setItem("diffprism_token", accessToken); localStorage.removeItem("evoagent_token"); $("#login-overlay").classList.add("hidden"); $("#logout").classList.remove("hidden"); $("#login-error").textContent = ""; await loadDashboard(); } catch (error) { $("#login-error").textContent = error.message; } finally { setButtonBusy(button, false); }
 });
 
-$("#logout").addEventListener("click", () => {
-  accessToken = "";
-  localStorage.removeItem("evoagent_token");
-  $("#login-overlay").classList.remove("hidden");
-  $("#logout").classList.add("hidden");
-});
+$("#logout").addEventListener("click", () => { accessToken = ""; localStorage.removeItem("diffprism_token"); localStorage.removeItem("evoagent_token"); $("#login-overlay").classList.remove("hidden"); $("#logout").classList.add("hidden"); });
 
 const diffInput = $('textarea[name="diff"]', $("#review-form"));
-const diffStats = $("#diff-stats");
-function updateDiffStats() {
-  const value = diffInput.value;
-  const lines = value ? value.split(/\r?\n/).length : 0;
-  diffStats.textContent = `${lines} 行，${value.length} 字符`;
-}
+function updateDiffStats() { const value = diffInput.value; $("#diff-stats").textContent = `${value ? value.split(/\r?\n/).length : 0} 行 · ${value.length} 字符`; }
 diffInput.addEventListener("input", updateDiffStats);
 updateDiffStats();
-
 if (accessToken) $("#logout").classList.remove("hidden");
-show(location.hash.slice(1) || "overview", false);
+show(location.hash.slice(1) || "inbox", false);
 loadDashboard();
