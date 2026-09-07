@@ -19,6 +19,7 @@ from .memory import MemoryManager
 from .models import TaskState, TraceEvent
 from .observability import AlertManager, Observability
 from .postgres_store import create_store
+from .presentation import present_review_pack
 from .report import to_markdown
 from .reviewer import (
     OpenAICompatibleReviewer, ReliabilityRuleReviewer, SecurityRuleReviewer,
@@ -216,7 +217,7 @@ class ReviewService:
 
     def list_skills(self, tenant_id: str) -> list:
         scanners = [item for item in self.registry.list() if item.get("kind") == "scanner"]
-        return scanners + [{
+        skills = scanners + [{
             "name": skill.name, "version": skill.version,
             "description": skill.description, "source": skill.source,
             "kind": "agent-skill", "sandboxed": False,
@@ -224,6 +225,7 @@ class ReviewService:
             "content_sha256": skill.content_sha256,
             "resources": list(skill.resource_paths),
         } for skill in self._active_agent_skills(tenant_id)]
+        return [present_review_pack(skill) for skill in skills]
 
     def _validate_review(self, repository: str, diff: str) -> None:
         if not repository or len(repository) > 250:

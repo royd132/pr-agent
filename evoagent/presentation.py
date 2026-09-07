@@ -20,7 +20,14 @@ ROLE_LABELS = {
 
 REVIEW_PACK_LABELS = {
     "security-review": "Security Boundaries",
-    "reliability-review": "Reliability Paths",
+    "correctness-review": "Behavioral Correctness",
+    "reliability-review": "Failure Recovery",
+    "database-review": "Data Integrity",
+    "api-compatibility": "Contract Compatibility",
+    "performance-review": "Performance Risk",
+    "test-quality": "Test Coverage",
+    "observability-review": "Runtime Signals",
+    "code-quality": "Maintainability",
     "llm-review": "Context Reasoning",
 }
 
@@ -86,3 +93,13 @@ def public_benchmark_summary(run):
         "arm_display_name": BENCHMARK_ARM_LABELS.get(arm, arm),
         "metrics": visible_metrics,
     }
+
+
+def present_review_pack(skill):
+    """Add stable product-facing metadata without changing a skill's identity."""
+    value = dict(skill)
+    name = str(value.get("name") or "")
+    value["display_name"] = REVIEW_PACK_LABELS.get(name, name or "Unknown pack")
+    value["status_label"] = "Sandboxed" if value.get("sandboxed") else "Active"
+    value["scope"] = str(value.get("description") or "No scope description available")
+    return value

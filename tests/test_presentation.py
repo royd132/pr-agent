@@ -11,6 +11,7 @@ from evoagent.presentation import (
     REVIEW_PACK_LABELS,
     ROLE_LABELS,
     public_benchmark_summary,
+    present_review_pack,
     synthetic_benchmark_status,
 )
 
@@ -56,6 +57,17 @@ class PresentationTests(unittest.TestCase):
         })
         self.assertEqual("Full DiffPrism", summary["arm_display_name"])
         self.assertEqual(120, summary["metrics"]["p95_review_latency_ms"])
+
+    def test_review_pack_adapter_keeps_machine_identity(self):
+        presented = present_review_pack({
+            "name": "security-review", "description": "security", "version": 2,
+            "source": "builtin", "sandboxed": True,
+            "allowed_tools": ["read_file"],
+        })
+        self.assertEqual("security-review", presented["name"])
+        self.assertEqual("Security Boundaries", presented["display_name"])
+        self.assertEqual("Sandboxed", presented["status_label"])
+        self.assertEqual("security", presented["scope"])
 
 
 if __name__ == "__main__":
