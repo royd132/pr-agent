@@ -130,7 +130,7 @@ class SafeFixer:
         source_sha = pull["head"]["sha"]
         source_repository = pull["head"].get("repo", {}).get("full_name") or repository
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        branch = "evoagent/fix-pr-%d-%s" % (pull_request, stamp)
+        branch = "diffprism/fix-pr-%d-%s" % (pull_request, stamp)
         planned = []
         by_path = {}
         for finding in report.get("findings", []):
@@ -159,11 +159,11 @@ class SafeFixer:
             }
         commit = client.create_atomic_commit(
             repository, branch, source_sha, files,
-            "fix: apply verified EvoAgent repairs for PR #%d" % pull_request,
+            "fix: apply verified DiffPrism repairs for PR #%d" % pull_request,
         )
         draft = client.create_draft_pull_request(
             repository,
-            "fix: verified EvoAgent repairs for #%d" % pull_request,
+            "fix: verified DiffPrism repairs for #%d" % pull_request,
             branch, pull.get("base", {}).get("ref", "main"),
             "Automated deterministic repair. All configured compile and test gates passed.",
         )

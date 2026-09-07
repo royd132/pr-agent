@@ -272,7 +272,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         if path == "/github/install":
             if not self.settings.github_app_slug:
-                self._send_json(503, {"error": "EVOAGENT_GITHUB_APP_SLUG is not configured"})
+                self._send_json(503, {"error": "DIFFPRISM_GITHUB_APP_SLUG is not configured"})
                 return
             self.send_response(302)
             self.send_header("Location", "https://github.com/apps/%s/installations/new" % self.settings.github_app_slug)

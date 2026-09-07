@@ -1,0 +1,85 @@
+{
+  "repository": "demo/payments",
+  "pull_request": 42,
+  "summary": "One verified authorization regression requires action before merge.",
+  "risk": "high",
+  "findings": [
+    {
+      "rule_id": "AUTH-SCOPE-BYPASS",
+      "severity": "high",
+      "title": "Fallback bypasses account scope check",
+      "explanation": "The new fallback returns the requested account before membership is checked.",
+      "path": "payments/accounts.py",
+      "line": 87,
+      "evidence": "if cached is None: return load_account(account_id)",
+      "fix": "Apply the membership predicate before both cached and database return paths.",
+      "test": "Request another tenant's uncached account and assert a 403 response.",
+      "confidence": 0.94,
+      "evidence_refs": [],
+      "call_chain": [],
+      "source": "failure-hunter",
+      "gate": {},
+      "cwe": "CWE-862",
+      "trigger": "An authenticated user requests an uncached account_id owned by another tenant.",
+      "impact": "Cross-tenant account metadata can be disclosed.",
+      "verification": "verified",
+      "examiner_reason": "The changed early return is reachable before the existing membership guard."
+    }
+  ],
+  "files_reviewed": [
+    "payments/accounts.py",
+    "tests/test_accounts.py"
+  ],
+  "reviewer": "agentic-prism",
+  "collaboration": {
+    "protocol": "prism-review-v1",
+    "roles": [
+      "prism-lead",
+      "scope-mapper",
+      "failure-hunter",
+      "evidence-examiner"
+    ],
+    "revision_rounds": 0
+  },
+  "run_mode": {
+    "requested": "agentic",
+    "effective": "agentic"
+  },
+  "components": [],
+  "execution": {
+    "llm_calls": 5,
+    "tool_calls": 7,
+    "input_tokens": 3200,
+    "output_tokens": 880,
+    "total_tokens": 4080,
+    "cost_usd": 0.0,
+    "duration_ms": 1840
+  },
+  "change_map": {
+    "intent": "Add a cache fallback for account lookup.",
+    "surfaces": [
+      "tenant authorization",
+      "account cache"
+    ],
+    "affected_files": [
+      "payments/accounts.py",
+      "tests/test_accounts.py"
+    ],
+    "test_gaps": [
+      "uncached cross-tenant lookup"
+    ],
+    "unknowns": [
+      "production cache miss rate"
+    ]
+  },
+  "verdict": {
+    "decision": "block",
+    "reason": "A verified cross-tenant authorization path is reachable.",
+    "required_actions": [
+      "Move membership validation before the cache fallback.",
+      "Add the uncached cross-tenant regression test."
+    ],
+    "verified_findings": 1,
+    "rejected_findings": 2
+  }
+}

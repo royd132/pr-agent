@@ -1,4 +1,4 @@
-"""Checkpointed review workflow powered by EvoAgent's own runtime."""
+"""Checkpointed review workflow powered by the DiffPrism compatibility runtime."""
 import threading
 from typing import Any, Dict, Optional, TypedDict
 

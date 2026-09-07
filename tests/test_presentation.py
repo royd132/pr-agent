@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from evoagent.presentation import (
     present_review_pack,
     synthetic_benchmark_status,
 )
+from evoagent.report import to_markdown
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -68,6 +70,23 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual("Security Boundaries", presented["display_name"])
         self.assertEqual("Sandboxed", presented["status_label"])
         self.assertEqual("security", presented["scope"])
+
+    def test_documentation_names_limits_and_references(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        evaluation = (ROOT / "docs" / "evaluation.md").read_text(encoding="utf-8")
+        self.assertIn("Split the diff. Verify the risk.", readme)
+        self.assertIn("Synthetic Fault Benchmark v1", evaluation)
+        self.assertIn("not real public PR data", evaluation)
+        self.assertIn("PR-Agent", readme)
+        self.assertIn("Semgrep", readme)
+        self.assertNotIn("# EvoAgent PR Reviewer", readme)
+
+    def test_checked_in_examples_follow_the_report_contract(self):
+        report = json.loads((ROOT / "examples" / "sample-review.json").read_text(
+            encoding="utf-8"
+        ))
+        expected = (ROOT / "examples" / "sample-report.md").read_text(encoding="utf-8")
+        self.assertEqual(expected, to_markdown(report))
 
 
 if __name__ == "__main__":
