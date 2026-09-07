@@ -12,6 +12,7 @@ from .config import Settings
 from .auth import Principal
 from .github import verify_signature
 from .metrics import metrics
+from .presentation import PRODUCT_NAME, PRODUCT_VERSION
 from .modes import public_taxonomy, resolve_mode
 from .report import to_markdown
 from .service import ReviewService
@@ -34,7 +35,7 @@ WEB_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web"))
 class ApiHandler(BaseHTTPRequestHandler):
     service: ReviewService
     settings: Settings
-    server_version = "EvoAgent/0.3"
+    server_version = "%s/%s" % (PRODUCT_NAME, PRODUCT_VERSION)
 
     def log_message(self, fmt: str, *args: Any) -> None:
         print("%s - %s" % (self.address_string(), fmt % args))
@@ -574,7 +575,7 @@ def run() -> None:
     service = ReviewService(settings)
     handler = type("ConfiguredApiHandler", (ApiHandler,), {"service": service, "settings": settings})
     server = ThreadingHTTPServer((settings.host, settings.port), handler)
-    print("EvoAgent dashboard: http://%s:%d" % (settings.host, settings.port))
+    print("%s dashboard: http://%s:%d" % (PRODUCT_NAME, settings.host, settings.port))
     print("Persistence: %s | Queue: %s | Orchestrator: %s" % (
         "postgresql" if settings.database_url else "sqlite", service.queue.backend, service.reviewer.name
     ))
