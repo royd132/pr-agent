@@ -108,6 +108,8 @@ DIFFPRISM_LLM_MODEL=<model>
 
 生产环境可使用 PostgreSQL、Redis Streams、OpenTelemetry 和 GitHub App/PAT。容器入口为 `python -m diffprism`；部署前必须启用认证、限定 GitHub 权限、隔离执行环境并配置真实的回放数据。
 
+Compose 启动前必须设置 `DIFFPRISM_POSTGRES_PASSWORD`、`DIFFPRISM_AUTH_SECRET` 和 `DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD`；示例不会提供固定生产凭据。
+
 ## 测试
 
 ```powershell

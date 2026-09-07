@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: evoagent
-      POSTGRES_USER: evoagent
-      POSTGRES_PASSWORD: evoagent-local
+      POSTGRES_DB: diffprism
+      POSTGRES_USER: diffprism
+      POSTGRES_PASSWORD: ${DIFFPRISM_POSTGRES_PASSWORD:?set DIFFPRISM_POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U evoagent"]
+      test: ["CMD-SHELL", "pg_isready -U diffprism"]
       interval: 5s
       timeout: 3s
       retries: 15
@@ -30,17 +30,14 @@ services:
       - "8080:8080"
     environment:
       DIFFPRISM_HOST: 0.0.0.0
-      DIFFPRISM_DATABASE_URL: postgresql://evoagent:evoagent-local@postgres:5432/evoagent
+      DIFFPRISM_DATABASE_URL: postgresql://diffprism:${DIFFPRISM_POSTGRES_PASSWORD}@postgres:5432/diffprism
       DIFFPRISM_REDIS_URL: redis://redis:6379/0
       DIFFPRISM_ASYNC_WORKERS: 4
       DIFFPRISM_SKILLS_DIR: /app/skills
       DIFFPRISM_AUTH_REQUIRED: "true"
-      DIFFPRISM_AUTH_SECRET: ${DIFFPRISM_AUTH_SECRET:-}
-      EVOAGENT_AUTH_SECRET: ${EVOAGENT_AUTH_SECRET:-local-only-change-this-secret-123456}
-      DIFFPRISM_BOOTSTRAP_ADMIN_USERNAME: ${DIFFPRISM_BOOTSTRAP_ADMIN_USERNAME:-}
-      EVOAGENT_BOOTSTRAP_ADMIN_USERNAME: ${EVOAGENT_BOOTSTRAP_ADMIN_USERNAME:-admin}
-      DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD: ${DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD:-}
-      EVOAGENT_BOOTSTRAP_ADMIN_PASSWORD: ${EVOAGENT_BOOTSTRAP_ADMIN_PASSWORD:-evoagent-local-admin}
+      DIFFPRISM_AUTH_SECRET: ${DIFFPRISM_AUTH_SECRET:?set DIFFPRISM_AUTH_SECRET}
+      DIFFPRISM_BOOTSTRAP_ADMIN_USERNAME: ${DIFFPRISM_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD: ${DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD:?set DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD}
     env_file:
       - path: .env
         required: false
