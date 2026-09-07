@@ -54,6 +54,10 @@ class Finding:
     # Canonical taxonomy used for evaluation.  rule_id remains an internal or
     # reviewer-specific label and is not required to be stable across models.
     cwe: Optional[str] = None
+    trigger: str = ""
+    impact: str = ""
+    verification: str = "unverified"
+    examiner_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         value = asdict(self)
@@ -74,6 +78,8 @@ class ReviewReport:
     run_mode: Dict[str, Any] = field(default_factory=dict)
     components: List[Dict[str, Any]] = field(default_factory=list)
     execution: Dict[str, Any] = field(default_factory=dict)
+    change_map: Dict[str, Any] = field(default_factory=dict)
+    verdict: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -88,6 +94,8 @@ class ReviewReport:
             "run_mode": self.run_mode,
             "components": self.components,
             "execution": self.execution,
+            "change_map": self.change_map,
+            "verdict": self.verdict,
         }
 
 
