@@ -8,6 +8,14 @@ from typing import Any, Dict, Optional
 from .models import ReviewReport, TaskState, TraceEvent
 
 
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -19,7 +27,7 @@ class TaskStore:
         self._init()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, timeout=10)
+        conn = sqlite3.connect(self.path, timeout=10, factory=_ClosingConnection)
         conn.row_factory = sqlite3.Row
         return conn
 
