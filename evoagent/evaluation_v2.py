@@ -1,6 +1,7 @@
 """Product-backed agentic evaluation suite for labelled PRs."""
 from collections import Counter
 import json
+import math
 import random
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -528,6 +529,7 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
             "invalid_comments": 0, "exact_location_hits": 0, "evidence_hits": 0,
             "accepted_comments": 0, "closed_comments": 0,
             "latency_ms": 0, "cost_microusd": 0,
+            "latency_samples_ms": [],
             "llm_calls": 0, "input_tokens": 0,
             "output_tokens": 0, "total_tokens": 0,
             "critic_accepted": 0, "critic_rejected": 0,
@@ -547,6 +549,7 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
         ):
             totals[field] += int(result.get(field, 0))
         totals["cost_microusd"] += int(float(result.get("cost_usd", 0)) * 1_000_000)
+        totals["latency_samples_ms"].append(int(result.get("latency_ms", 0)))
 
     @staticmethod
     def _metrics(totals):
@@ -554,6 +557,9 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
         cases = totals["cases"] or 1
         tp = totals["tp"] or 1
         commented = totals["accepted_comments"] + totals["closed_comments"]
+        latencies = sorted(totals.get("latency_samples_ms") or [])
+        p95 = latencies[max(0, math.ceil(len(latencies) * 0.95) - 1)] if latencies else 0
+        verified = totals["critic_accepted"]
         values.update({
             "invalid_comments_per_pr": round(totals["invalid_comments"] / cases, 4),
             "exact_line_accuracy": round(totals["exact_location_hits"] / tp, 4),
@@ -565,6 +571,10 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
                 totals["cost_microusd"] / 1_000_000 / cases, 8
             ),
             "average_latency_ms_per_pr": round(totals["latency_ms"] / cases, 2),
+            "p95_review_latency_ms": p95,
+            "cost_per_verified_finding_usd": round(
+                totals["cost_microusd"] / 1_000_000 / verified, 8
+            ) if verified else 0.0,
             "average_llm_calls_per_pr": round(totals["llm_calls"] / cases, 4),
             "average_input_tokens_per_pr": round(totals["input_tokens"] / cases, 2),
             "average_output_tokens_per_pr": round(totals["output_tokens"] / cases, 2),
@@ -581,6 +591,7 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
             "revision_requests_per_pr": round(totals["revision_requests"] / cases, 4),
             "revision_results_per_pr": round(totals["revision_results"] / cases, 4),
         })
+        values.pop("latency_samples_ms", None)
         return values
 
 
@@ -590,6 +601,7 @@ DEFAULT_COMPARISON_METRICS = (
     "evidence_accuracy", "invalid_comments_per_pr",
     "average_total_tokens_per_pr", "average_latency_ms_per_pr",
     "average_cost_usd_per_pr", "failure_rate",
+    "p95_review_latency_ms", "cost_per_verified_finding_usd",
 )
 
 

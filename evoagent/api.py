@@ -12,7 +12,13 @@ from .config import Settings
 from .auth import Principal
 from .github import verify_signature
 from .metrics import metrics
-from .presentation import PRODUCT_NAME, PRODUCT_VERSION
+from .presentation import (
+    BENCHMARK_ARM_LABELS,
+    PRODUCT_NAME,
+    PRODUCT_VERSION,
+    public_benchmark_summary,
+    synthetic_benchmark_status,
+)
 from .modes import public_taxonomy, resolve_mode
 from .report import to_markdown
 from .service import ReviewService
@@ -174,6 +180,16 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "provider": self.service.llm_config.get("provider", "local"),
                     "model": self.service.llm_config.get("model", ""),
                 },
+            })
+            return
+        if path == "/api/benchmark":
+            self._send_json(200, {
+                "dataset": synthetic_benchmark_status(),
+                "arms": BENCHMARK_ARM_LABELS,
+                "runs": [
+                    public_benchmark_summary(item)
+                    for item in self.service.store.list_evolution_runs(20)
+                ],
             })
             return
         if path == "/api/failures":

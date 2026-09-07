@@ -27,12 +27,12 @@ FOCUS_RULE = re.compile(r"\[focus-rule:([A-Z][A-Z0-9_-]{1,79})\]")
 
 DEFAULT_PROMPT_DATASET = os.path.abspath(os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
-    "evaluation_data", "prompt_evolution_130.jsonl",
+    "evaluation_data", "pr_diff_100.jsonl",
 ))
 
 
 def load_prompt_evolution_cases(dataset_path: str = DEFAULT_PROMPT_DATASET) -> List[dict]:
-    """Load the checked-in 130-case prompt replay corpus."""
+    """Load the checked-in 100-case synthetic prompt replay corpus."""
     return load_jsonl(dataset_path)
 
 

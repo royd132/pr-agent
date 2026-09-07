@@ -10,9 +10,19 @@ from evoagent.evaluation_harness import (
     one_to_one_match,
 )
 from evoagent.models import Finding, Severity
+from evoagent.evaluation_v2 import ProductionEvaluationHarness
 
 
 class EndToEndEvaluationTests(unittest.TestCase):
+    def test_production_metrics_include_p95_latency_and_cost_per_verified_finding(self):
+        totals = ProductionEvaluationHarness._empty_totals()
+        totals.update({"cases": 4, "tp": 2, "execution_successes": 4,
+                       "latency_ms": 106, "latency_samples_ms": [1, 2, 3, 100],
+                       "cost_microusd": 2_000_000, "critic_accepted": 2})
+        metrics = ProductionEvaluationHarness._metrics(totals)
+        self.assertEqual(100, metrics["p95_review_latency_ms"])
+        self.assertEqual(1.0, metrics["cost_per_verified_finding_usd"])
+
     def test_generated_dataset_has_repository_level_split_and_expected_counts(self):
         cases = load_controlled_pr_cases()
         self.assertEqual(100, len(cases))
