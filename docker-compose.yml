@@ -24,19 +24,22 @@ services:
       timeout: 3s
       retries: 15
 
-  evoagent:
+  diffprism:
     build: .
     ports:
       - "8080:8080"
     environment:
-      EVOAGENT_HOST: 0.0.0.0
-      EVOAGENT_DATABASE_URL: postgresql://evoagent:evoagent-local@postgres:5432/evoagent
-      EVOAGENT_REDIS_URL: redis://redis:6379/0
-      EVOAGENT_ASYNC_WORKERS: 4
-      EVOAGENT_SKILLS_DIR: /app/skills
-      EVOAGENT_AUTH_REQUIRED: "true"
+      DIFFPRISM_HOST: 0.0.0.0
+      DIFFPRISM_DATABASE_URL: postgresql://evoagent:evoagent-local@postgres:5432/evoagent
+      DIFFPRISM_REDIS_URL: redis://redis:6379/0
+      DIFFPRISM_ASYNC_WORKERS: 4
+      DIFFPRISM_SKILLS_DIR: /app/skills
+      DIFFPRISM_AUTH_REQUIRED: "true"
+      DIFFPRISM_AUTH_SECRET: ${DIFFPRISM_AUTH_SECRET:-}
       EVOAGENT_AUTH_SECRET: ${EVOAGENT_AUTH_SECRET:-local-only-change-this-secret-123456}
+      DIFFPRISM_BOOTSTRAP_ADMIN_USERNAME: ${DIFFPRISM_BOOTSTRAP_ADMIN_USERNAME:-}
       EVOAGENT_BOOTSTRAP_ADMIN_USERNAME: ${EVOAGENT_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD: ${DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD:-}
       EVOAGENT_BOOTSTRAP_ADMIN_PASSWORD: ${EVOAGENT_BOOTSTRAP_ADMIN_PASSWORD:-evoagent-local-admin}
     env_file:
       - path: .env

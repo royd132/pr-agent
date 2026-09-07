@@ -5,8 +5,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY evoagent ./evoagent
+COPY diffprism ./diffprism
 COPY web ./web
 COPY skills ./skills
 EXPOSE 8080
-CMD ["python", "-m", "evoagent"]
+CMD ["python", "-m", "diffprism"]
 

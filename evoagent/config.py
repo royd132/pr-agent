@@ -45,19 +45,26 @@ def load_dotenv(paths: Optional[Iterable[str]] = None) -> None:
 load_dotenv()
 
 
+def _setting(name: str, default: str = "") -> str:
+    preferred = os.getenv("DIFFPRISM_" + name)
+    if preferred not in (None, ""):
+        return preferred
+    return os.getenv("EVOAGENT_" + name, default)
+
+
 def _int(name: str, default: int) -> int:
-    value = int(os.getenv(name, str(default)))
+    value = int(_setting(name, str(default)))
     if value <= 0:
         raise ValueError("%s must be positive" % name)
     return value
 
 
 def _bool(name: str, default: bool = False) -> bool:
-    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+    return _setting(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _non_negative_int(name: str, default: int) -> int:
-    value = int(os.getenv(name, str(default)))
+    value = int(_setting(name, str(default)))
     if value < 0:
         raise ValueError("%s must be non-negative" % name)
     return value
@@ -92,7 +99,7 @@ class Settings:
     deepseek_api_key: str = ""
     openrouter_api_key: str = ""
     openrouter_site_url: str = ""
-    openrouter_app_name: str = "EvoAgent"
+    openrouter_app_name: str = "DiffPrism"
     eval_max_cases: int = 5
     eval_min_cases: int = 3
     eval_min_improvement: float = 0.01
@@ -110,7 +117,7 @@ class Settings:
     repair_test_command: str = ""
     repair_verify_timeout_seconds: int = 120
     otel_endpoint: str = ""
-    otel_service_name: str = "evoagent"
+    otel_service_name: str = "diffprism"
     alert_failure_rate: float = 0.20
     alert_min_samples: int = 10
     alert_window_seconds: int = 900
@@ -145,7 +152,7 @@ class Settings:
         if provider == "deepseek":
             api_key = self.deepseek_api_key or self.llm_api_key
             if not api_key:
-                raise ValueError("DeepSeek requires EVOAGENT_DEEPSEEK_API_KEY")
+                raise ValueError("DeepSeek requires DIFFPRISM_DEEPSEEK_API_KEY")
             return {
                 "provider": "deepseek",
                 "base_url": self.llm_base_url or "https://api.deepseek.com",
@@ -157,7 +164,7 @@ class Settings:
         if provider in {"openrouter-deepseek-free", "openrouter_deepseek_free"}:
             api_key = self.openrouter_api_key or self.llm_api_key
             if not api_key:
-                raise ValueError("OpenRouter requires EVOAGENT_OPENROUTER_API_KEY")
+                raise ValueError("OpenRouter requires DIFFPRISM_OPENROUTER_API_KEY")
             headers = {}
             if self.openrouter_site_url:
                 headers["HTTP-Referer"] = self.openrouter_site_url
@@ -174,7 +181,7 @@ class Settings:
         if provider == "openrouter-free":
             api_key = self.openrouter_api_key or self.llm_api_key
             if not api_key:
-                raise ValueError("OpenRouter requires EVOAGENT_OPENROUTER_API_KEY")
+                raise ValueError("OpenRouter requires DIFFPRISM_OPENROUTER_API_KEY")
             headers = {}
             if self.openrouter_site_url:
                 headers["HTTP-Referer"] = self.openrouter_site_url
@@ -191,8 +198,8 @@ class Settings:
         if provider == "custom":
             if not (self.llm_base_url and self.llm_api_key and self.llm_model):
                 raise ValueError(
-                    "Custom LLM requires EVOAGENT_LLM_BASE_URL, "
-                    "EVOAGENT_LLM_API_KEY and EVOAGENT_LLM_MODEL"
+                    "Custom LLM requires DIFFPRISM_LLM_BASE_URL, "
+                    "DIFFPRISM_LLM_API_KEY and DIFFPRISM_LLM_MODEL"
                 )
             return {
                 "provider": "custom",
@@ -201,129 +208,129 @@ class Settings:
                 "model": self.llm_model,
                 "headers": {},
             }
-        raise ValueError("unsupported EVOAGENT_LLM_PROVIDER: %s" % self.llm_provider)
+        raise ValueError("unsupported DIFFPRISM_LLM_PROVIDER: %s" % self.llm_provider)
 
     def validate_evolution(self) -> None:
         if self.eval_min_cases > self.eval_max_cases:
-            raise ValueError("EVOAGENT_EVAL_MIN_CASES cannot exceed EVOAGENT_EVAL_MAX_CASES")
+            raise ValueError("DIFFPRISM_EVAL_MIN_CASES cannot exceed DIFFPRISM_EVAL_MAX_CASES")
         if not 0.0 <= self.eval_min_improvement <= 1.0:
-            raise ValueError("EVOAGENT_EVAL_MIN_IMPROVEMENT must be between 0 and 1")
+            raise ValueError("DIFFPRISM_EVAL_MIN_IMPROVEMENT must be between 0 and 1")
         if self.eval_min_holdout_cases > self.eval_max_cases:
-            raise ValueError("EVOAGENT_EVAL_MIN_HOLDOUT_CASES cannot exceed EVOAGENT_EVAL_MAX_CASES")
+            raise ValueError("DIFFPRISM_EVAL_MIN_HOLDOUT_CASES cannot exceed DIFFPRISM_EVAL_MAX_CASES")
         if not 0.0 <= self.eval_max_metric_regression <= 1.0:
-            raise ValueError("EVOAGENT_EVAL_MAX_METRIC_REGRESSION must be between 0 and 1")
+            raise ValueError("DIFFPRISM_EVAL_MAX_METRIC_REGRESSION must be between 0 and 1")
         if self.auth_required and len(self.auth_secret.encode("utf-8")) < 32:
             raise ValueError(
-                "EVOAGENT_AUTH_SECRET must contain at least 32 bytes when authentication is enabled"
+                "DIFFPRISM_AUTH_SECRET must contain at least 32 bytes when authentication is enabled"
             )
         if bool(self.bootstrap_admin_username) != bool(self.bootstrap_admin_password):
             raise ValueError("bootstrap admin username and password must be configured together")
         if not 0.0 <= self.alert_failure_rate <= 1.0:
-            raise ValueError("EVOAGENT_ALERT_FAILURE_RATE must be between 0 and 1")
+            raise ValueError("DIFFPRISM_ALERT_FAILURE_RATE must be between 0 and 1")
         if self.llm_input_cost_per_million < 0 or self.llm_output_cost_per_million < 0:
             raise ValueError("LLM token prices cannot be negative")
         if self.evaluation_min_public_prs < 300:
-            raise ValueError("EVOAGENT_EVALUATION_MIN_PUBLIC_PRS must be at least 300")
+            raise ValueError("DIFFPRISM_EVALUATION_MIN_PUBLIC_PRS must be at least 300")
 
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            host=os.getenv("EVOAGENT_HOST", "127.0.0.1"),
-            port=_int("EVOAGENT_PORT", 8080),
-            db_path=os.getenv("EVOAGENT_DB_PATH", "evoagent.db"),
-            max_diff_bytes=_int("EVOAGENT_MAX_DIFF_BYTES", 1024 * 1024),
-            max_steps=_int("EVOAGENT_MAX_STEPS", 8),
-            timeout_seconds=_int("EVOAGENT_TIMEOUT_SECONDS", 120),
-            llm_base_url=os.getenv("EVOAGENT_LLM_BASE_URL", "").rstrip("/"),
-            llm_api_key=os.getenv("EVOAGENT_LLM_API_KEY", ""),
-            llm_model=os.getenv("EVOAGENT_LLM_MODEL", ""),
-            github_webhook_secret=os.getenv("EVOAGENT_GITHUB_WEBHOOK_SECRET", ""),
-            github_token=os.getenv("EVOAGENT_GITHUB_TOKEN", ""),
-            auto_post_review=_bool("EVOAGENT_AUTO_POST_REVIEW"),
-            database_url=os.getenv("EVOAGENT_DATABASE_URL", ""),
-            redis_url=os.getenv("EVOAGENT_REDIS_URL", ""),
-            async_workers=_int("EVOAGENT_ASYNC_WORKERS", 2),
-            memory_enabled=_bool("EVOAGENT_MEMORY_ENABLED", True),
-            memory_recall_limit=_int("EVOAGENT_MEMORY_RECALL_LIMIT", 6),
+            host=_setting("HOST", "127.0.0.1"),
+            port=_int("PORT", 8080),
+            db_path=_setting("DB_PATH", "evoagent.db"),
+            max_diff_bytes=_int("MAX_DIFF_BYTES", 1024 * 1024),
+            max_steps=_int("MAX_STEPS", 8),
+            timeout_seconds=_int("TIMEOUT_SECONDS", 120),
+            llm_base_url=_setting("LLM_BASE_URL", "").rstrip("/"),
+            llm_api_key=_setting("LLM_API_KEY", ""),
+            llm_model=_setting("LLM_MODEL", ""),
+            github_webhook_secret=_setting("GITHUB_WEBHOOK_SECRET", ""),
+            github_token=_setting("GITHUB_TOKEN", ""),
+            auto_post_review=_bool("AUTO_POST_REVIEW"),
+            database_url=_setting("DATABASE_URL", ""),
+            redis_url=_setting("REDIS_URL", ""),
+            async_workers=_int("ASYNC_WORKERS", 2),
+            memory_enabled=_bool("MEMORY_ENABLED", True),
+            memory_recall_limit=_int("MEMORY_RECALL_LIMIT", 6),
             memory_working_ttl_seconds=_int(
-                "EVOAGENT_MEMORY_WORKING_TTL_SECONDS", 86400
+                "MEMORY_WORKING_TTL_SECONDS", 86400
             ),
-            skills_dir=os.getenv("EVOAGENT_SKILLS_DIR", "skills"),
-            github_app_id=os.getenv("EVOAGENT_GITHUB_APP_ID", ""),
-            github_app_slug=os.getenv("EVOAGENT_GITHUB_APP_SLUG", ""),
-            github_private_key_path=os.getenv("EVOAGENT_GITHUB_PRIVATE_KEY_PATH", ""),
-            public_base_url=os.getenv("EVOAGENT_PUBLIC_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
-            llm_provider=os.getenv("EVOAGENT_LLM_PROVIDER", "local"),
-            deepseek_api_key=os.getenv("EVOAGENT_DEEPSEEK_API_KEY", ""),
-            openrouter_api_key=os.getenv("EVOAGENT_OPENROUTER_API_KEY", ""),
-            openrouter_site_url=os.getenv("EVOAGENT_OPENROUTER_SITE_URL", ""),
-            openrouter_app_name=os.getenv("EVOAGENT_OPENROUTER_APP_NAME", "EvoAgent"),
-            eval_max_cases=_int("EVOAGENT_EVAL_MAX_CASES", 5),
-            eval_min_cases=_int("EVOAGENT_EVAL_MIN_CASES", 3),
-            eval_min_improvement=float(os.getenv("EVOAGENT_EVAL_MIN_IMPROVEMENT", "0.01")),
-            eval_min_holdout_cases=_non_negative_int("EVOAGENT_EVAL_MIN_HOLDOUT_CASES", 2),
+            skills_dir=_setting("SKILLS_DIR", "skills"),
+            github_app_id=_setting("GITHUB_APP_ID", ""),
+            github_app_slug=_setting("GITHUB_APP_SLUG", ""),
+            github_private_key_path=_setting("GITHUB_PRIVATE_KEY_PATH", ""),
+            public_base_url=_setting("PUBLIC_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
+            llm_provider=_setting("LLM_PROVIDER", "local"),
+            deepseek_api_key=_setting("DEEPSEEK_API_KEY", ""),
+            openrouter_api_key=_setting("OPENROUTER_API_KEY", ""),
+            openrouter_site_url=_setting("OPENROUTER_SITE_URL", ""),
+            openrouter_app_name=_setting("OPENROUTER_APP_NAME", "DiffPrism"),
+            eval_max_cases=_int("EVAL_MAX_CASES", 5),
+            eval_min_cases=_int("EVAL_MIN_CASES", 3),
+            eval_min_improvement=float(_setting("EVAL_MIN_IMPROVEMENT", "0.01")),
+            eval_min_holdout_cases=_non_negative_int("EVAL_MIN_HOLDOUT_CASES", 2),
             eval_max_metric_regression=float(
-                os.getenv("EVOAGENT_EVAL_MAX_METRIC_REGRESSION", "0")
+                _setting("EVAL_MAX_METRIC_REGRESSION", "0")
             ),
-            auth_required=_bool("EVOAGENT_AUTH_REQUIRED", False),
-            auth_secret=os.getenv("EVOAGENT_AUTH_SECRET", ""),
-            bootstrap_admin_username=os.getenv("EVOAGENT_BOOTSTRAP_ADMIN_USERNAME", ""),
-            bootstrap_admin_password=os.getenv("EVOAGENT_BOOTSTRAP_ADMIN_PASSWORD", ""),
-            default_tenant_id=os.getenv("EVOAGENT_DEFAULT_TENANT_ID", "default"),
-            session_ttl_seconds=_int("EVOAGENT_SESSION_TTL_SECONDS", 3600),
-            webhook_max_age_seconds=_int("EVOAGENT_WEBHOOK_MAX_AGE_SECONDS", 600),
-            queue_max_attempts=_int("EVOAGENT_QUEUE_MAX_ATTEMPTS", 3),
-            queue_lease_seconds=_int("EVOAGENT_QUEUE_LEASE_SECONDS", 60),
-            repair_test_command=os.getenv("EVOAGENT_REPAIR_TEST_COMMAND", ""),
-            repair_verify_timeout_seconds=_int("EVOAGENT_REPAIR_VERIFY_TIMEOUT_SECONDS", 120),
-            otel_endpoint=os.getenv("EVOAGENT_OTEL_ENDPOINT", ""),
-            otel_service_name=os.getenv("EVOAGENT_OTEL_SERVICE_NAME", "evoagent"),
-            alert_failure_rate=float(os.getenv("EVOAGENT_ALERT_FAILURE_RATE", "0.20")),
-            alert_min_samples=_int("EVOAGENT_ALERT_MIN_SAMPLES", 10),
-            alert_window_seconds=_int("EVOAGENT_ALERT_WINDOW_SECONDS", 900),
-            alert_webhook_url=os.getenv("EVOAGENT_ALERT_WEBHOOK_URL", ""),
-            alert_smtp_host=os.getenv("EVOAGENT_ALERT_SMTP_HOST", ""),
-            alert_email_to=os.getenv("EVOAGENT_ALERT_EMAIL_TO", ""),
+            auth_required=_bool("AUTH_REQUIRED", False),
+            auth_secret=_setting("AUTH_SECRET", ""),
+            bootstrap_admin_username=_setting("BOOTSTRAP_ADMIN_USERNAME", ""),
+            bootstrap_admin_password=_setting("BOOTSTRAP_ADMIN_PASSWORD", ""),
+            default_tenant_id=_setting("DEFAULT_TENANT_ID", "default"),
+            session_ttl_seconds=_int("SESSION_TTL_SECONDS", 3600),
+            webhook_max_age_seconds=_int("WEBHOOK_MAX_AGE_SECONDS", 600),
+            queue_max_attempts=_int("QUEUE_MAX_ATTEMPTS", 3),
+            queue_lease_seconds=_int("QUEUE_LEASE_SECONDS", 60),
+            repair_test_command=_setting("REPAIR_TEST_COMMAND", ""),
+            repair_verify_timeout_seconds=_int("REPAIR_VERIFY_TIMEOUT_SECONDS", 120),
+            otel_endpoint=_setting("OTEL_ENDPOINT", ""),
+            otel_service_name=_setting("OTEL_SERVICE_NAME", "diffprism"),
+            alert_failure_rate=float(_setting("ALERT_FAILURE_RATE", "0.20")),
+            alert_min_samples=_int("ALERT_MIN_SAMPLES", 10),
+            alert_window_seconds=_int("ALERT_WINDOW_SECONDS", 900),
+            alert_webhook_url=_setting("ALERT_WEBHOOK_URL", ""),
+            alert_smtp_host=_setting("ALERT_SMTP_HOST", ""),
+            alert_email_to=_setting("ALERT_EMAIL_TO", ""),
             continuous_eval_seconds=_non_negative_int(
-                "EVOAGENT_CONTINUOUS_EVAL_SECONDS", 0
+                "CONTINUOUS_EVAL_SECONDS", 0
             ),
-            agent_token_budget=_int("EVOAGENT_AGENT_TOKEN_BUDGET", 8000),
-            agent_time_budget_seconds=_int("EVOAGENT_AGENT_TIME_BUDGET_SECONDS", 60),
+            agent_token_budget=_int("AGENT_TOKEN_BUDGET", 8000),
+            agent_time_budget_seconds=_int("AGENT_TIME_BUDGET_SECONDS", 60),
             agent_context_window_tokens=_int(
-                "EVOAGENT_AGENT_CONTEXT_WINDOW_TOKENS", 32768
+                "AGENT_CONTEXT_WINDOW_TOKENS", 32768
             ),
             agent_context_input_tokens=_int(
-                "EVOAGENT_AGENT_CONTEXT_INPUT_TOKENS", 20000
+                "AGENT_CONTEXT_INPUT_TOKENS", 20000
             ),
             context_diff_token_budget=_int(
-                "EVOAGENT_CONTEXT_DIFF_TOKEN_BUDGET", 12000
+                "CONTEXT_DIFF_TOKEN_BUDGET", 12000
             ),
             context_observation_token_budget=_int(
-                "EVOAGENT_CONTEXT_OBSERVATION_TOKEN_BUDGET", 4000
+                "CONTEXT_OBSERVATION_TOKEN_BUDGET", 4000
             ),
             context_recent_observations=_non_negative_int(
-                "EVOAGENT_CONTEXT_RECENT_OBSERVATIONS", 2
+                "CONTEXT_RECENT_OBSERVATIONS", 2
             ),
             context_map_chunk_tokens=_int(
-                "EVOAGENT_CONTEXT_MAP_CHUNK_TOKENS", 3000
+                "CONTEXT_MAP_CHUNK_TOKENS", 3000
             ),
-            enabled_agents=os.getenv(
-                "EVOAGENT_ENABLED_AGENTS",
+            enabled_agents=_setting(
+                "ENABLED_AGENTS",
                 "lead,security,correctness-reliability,critic",
             ),
             llm_input_cost_per_million=float(
-                os.getenv("EVOAGENT_LLM_INPUT_COST_PER_MILLION", "0")
+                _setting("LLM_INPUT_COST_PER_MILLION", "0")
             ),
             llm_output_cost_per_million=float(
-                os.getenv("EVOAGENT_LLM_OUTPUT_COST_PER_MILLION", "0")
+                _setting("LLM_OUTPUT_COST_PER_MILLION", "0")
             ),
             evaluation_min_public_prs=_int(
-                "EVOAGENT_EVALUATION_MIN_PUBLIC_PRS", 300
+                "EVALUATION_MIN_PUBLIC_PRS", 300
             ),
             evaluation_min_f1_improvement=float(
-                os.getenv("EVOAGENT_EVALUATION_MIN_F1_IMPROVEMENT", "0.03")
+                _setting("EVALUATION_MIN_F1_IMPROVEMENT", "0.03")
             ),
             evaluation_min_high_risk_improvement=float(
-                os.getenv("EVOAGENT_EVALUATION_MIN_HIGH_RISK_IMPROVEMENT", "0.05")
+                _setting("EVALUATION_MIN_HIGH_RISK_IMPROVEMENT", "0.05")
             ),
         )
