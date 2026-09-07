@@ -46,25 +46,25 @@ class CapturingClient:
                 role, self.provider, self.model,
                 {"prompt_tokens": 20, "completion_tokens": 5}, 1,
             )
-        if role == "lead" and task["phase"] == "delegate":
+        if role == "prism-lead" and task["phase"] == "delegate":
             return {"action": "final", "delegations": [{
-                "assignment_id": "security-1", "worker": "security",
+                "assignment_id": "security-1", "worker": "scope-mapper",
                 "objective": "Review authentication and dynamic execution.",
                 "files": ["src/auth.py"], "risk_domains": ["authorization"],
             }], "risk_level": "high"}
-        if role == "lead" and task["phase"] == "assess-workers":
+        if role == "prism-lead" and task["phase"] == "assess-workers":
             return {
                 "action": "final", "revision_requests": [],
-                "critic_objective": "Verify candidates.",
+                "examiner_objective": "Verify candidates.",
             }
-        if role == "lead" and task["phase"] == "finalize":
+        if role == "prism-lead" and task["phase"] == "finalize":
             return {
                 "action": "final", "accepted_finding_indices": [],
                 "confidence_adjustments": [],
             }
-        if role in {"security", "correctness-reliability"}:
+        if role in {"scope-mapper", "failure-hunter"}:
             return {"action": "final", "findings": []}
-        if role == "critic":
+        if role == "evidence-examiner":
             return {"action": "final", "decisions": []}
         raise AssertionError((role, task))
 
@@ -77,7 +77,7 @@ class ContextManagerTests(unittest.TestCase):
         )
 
         compressed = manager.compress_diff(
-            large_diff(), "task", "security", focus_files=["src/auth.py"],
+            large_diff(), "task", "scope-mapper", focus_files=["src/auth.py"],
             risk_domains=["authorization", "token"],
         )
 
@@ -148,7 +148,7 @@ class ContextMemoryIntegrationTests(unittest.TestCase):
     def test_review_recall_and_semantic_diff_reach_agent_context(self):
         diff = large_diff()
         self.store.create("task", "org/repo", 1, {
-            "mode": "agentic", "enabled_agents": ["lead", "security"],
+            "mode": "agentic", "enabled_agents": ["prism-lead", "scope-mapper"],
         }, "tenant-a")
         memory = MemoryManager(self.store)
         memory.remember(

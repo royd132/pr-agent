@@ -29,7 +29,7 @@ class FakeClient:
                 role, self.provider, self.model,
                 {"prompt_tokens": 10, "completion_tokens": 5}, 1,
             )
-        if role == "lead":
+        if role == "prism-lead":
             managed = json.loads(user)
             task = json.loads(managed["task"])
             if task["phase"] == "delegate":
@@ -37,12 +37,12 @@ class FakeClient:
                     "action": "final",
                     "delegations": [
                         {
-                            "assignment_id": "security-1", "worker": "security",
+                            "assignment_id": "security-1", "worker": "scope-mapper",
                             "objective": "Review security",
                         },
                         {
                             "assignment_id": "reliability-1",
-                            "worker": "correctness-reliability",
+                            "worker": "failure-hunter",
                             "objective": "Review correctness",
                         },
                     ],
@@ -50,7 +50,7 @@ class FakeClient:
             if task["phase"] == "assess-workers":
                 return {
                     "action": "final", "revision_requests": [],
-                    "critic_objective": "Blindly verify every candidate.",
+                    "examiner_objective": "Blindly verify every candidate.",
                 }
             if task["phase"] == "finalize":
                 return {
@@ -61,9 +61,9 @@ class FakeClient:
                     "confidence_adjustments": [],
                 }
             raise AssertionError(task["phase"])
-        if role in {"security", "correctness-reliability"}:
+        if role in {"scope-mapper", "failure-hunter"}:
             return {"action": "final", "findings": []}
-        if role == "critic":
+        if role == "evidence-examiner":
             managed = json.loads(user)
             task = json.loads(managed["task"])
             return {
@@ -71,9 +71,10 @@ class FakeClient:
                 "decisions": [
                     {
                         "finding_index": index,
-                        "accepted": True,
-                        "objections": [],
+                        "decision": "verified",
+                        "reason": "Candidate evidence is sufficient.",
                         "confidence_adjustment": 0.0,
+                        "supporting_evidence_ids": [],
                     }
                     for index, _item in enumerate(task["candidates"])
                 ],
@@ -86,12 +87,12 @@ class AgenticEvaluationTests(unittest.TestCase):
         self.assertEqual(14, len(LocalRuleReviewer.RULES) + len(ContextRuleReviewer.RULES))
         expected_calls = {
             "multi-llm-no-critic": {
-                "lead": 2, "security": 1,
-                "correctness-reliability": 1,
+                "prism-lead": 2, "scope-mapper": 1,
+                "failure-hunter": 1,
             },
             "full-agentic": {
-                "lead": 2, "security": 1,
-                "correctness-reliability": 1, "critic": 1,
+                "prism-lead": 2, "scope-mapper": 1,
+                "failure-hunter": 1, "evidence-examiner": 1,
             },
         }
         parsed = parse_unified_diff(DIFF)
@@ -131,8 +132,8 @@ class AgenticEvaluationTests(unittest.TestCase):
         self.assertFalse(report["critic_gate"]["passed"])
         self.assertEqual(
             {
-                "lead": 6, "security": 3,
-                "correctness-reliability": 3, "critic": 3,
+                "prism-lead": 6, "scope-mapper": 3,
+                "failure-hunter": 3, "evidence-examiner": 3,
             },
             report["arms"]["full-agentic"]["execution"]["model_role_calls"],
         )

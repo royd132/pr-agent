@@ -146,7 +146,7 @@ class ReviewService:
             item.strip() for item in self.settings.enabled_agents.split(",") if item.strip()
         }
         unknown = enabled.difference({
-            "lead", "security", "correctness-reliability", "critic"
+            "prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"
         })
         if unknown:
             raise ValueError("unsupported enabled Agent role(s): %s" % ", ".join(sorted(unknown)))
@@ -533,7 +533,7 @@ class ReviewService:
     def _validate_enabled_agents(enabled_agents: Optional[list]) -> None:
         if enabled_agents is None:
             return
-        allowed = {"lead", "security", "correctness-reliability", "critic"}
+        allowed = {"prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"}
         unknown = set(enabled_agents).difference(allowed)
         if unknown:
             raise ValueError("unsupported enabled Agent role(s): %s" % ", ".join(sorted(unknown)))

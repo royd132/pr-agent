@@ -29,17 +29,17 @@ class HierarchicalClient:
                 role, self.provider, self.model,
                 {"prompt_tokens": 10, "completion_tokens": 5}, 1,
             )
-        if role == "lead":
+        if role == "prism-lead":
             if task["phase"] == "delegate":
                 return {
                     "action": "final", "delegations": [
                         {
-                            "assignment_id": "security-1", "worker": "security",
+                            "assignment_id": "security-1", "worker": "scope-mapper",
                             "objective": "Trace the changed input into dangerous calls.",
                         },
                         {
                             "assignment_id": "reliability-1",
-                            "worker": "correctness-reliability",
+                            "worker": "failure-hunter",
                             "objective": "Review failure and resource behavior.",
                         },
                     ], "risk_level": "high",
@@ -47,15 +47,15 @@ class HierarchicalClient:
             if task["phase"] == "assess-workers" and task["revision_round"] == 0:
                 return {
                     "action": "final", "revision_requests": [{
-                        "assignment_id": "security-1", "worker": "security",
+                        "assignment_id": "security-1", "worker": "scope-mapper",
                         "guidance": "Add an exact changed-line finding for dynamic execution.",
                         "required_evidence": ["changed-line evidence"],
-                    }], "critic_objective": "Challenge every proposed finding.",
+                    }], "examiner_objective": "Challenge every proposed finding.",
                 }
             if task["phase"] == "assess-workers":
                 return {
                     "action": "final", "revision_requests": [],
-                    "critic_objective": "Challenge every proposed finding.",
+                    "examiner_objective": "Challenge every proposed finding.",
                 }
             if task["phase"] == "finalize":
                 return {
@@ -66,25 +66,41 @@ class HierarchicalClient:
                     "confidence_adjustments": [],
                     "resolution_summary": "Workers supplied evidence and Critic approved.",
                 }
-        if role == "security":
+        if role == "scope-mapper":
             self.security_calls += 1
             if self.security_calls == 1:
-                return {"action": "final", "findings": []}
-            return {"action": "final", "findings": [{
+                return {"action": "final", "change_map": {
+                    "intent": "Review dynamic execution",
+                    "surfaces": ["input execution"],
+                    "affected_files": ["app.py"],
+                    "test_gaps": ["malicious expression"],
+                    "unknowns": [],
+                }, "findings": []}
+            return {"action": "final", "change_map": {
+                "intent": "Review dynamic execution",
+                "surfaces": ["input execution"],
+                "affected_files": ["app.py"],
+                "test_gaps": ["malicious expression"],
+                "unknowns": [],
+            }, "findings": [{
                 "rule_id": "SEC-LEAD-REVISION", "severity": "medium",
                 "title": "Dynamic execution", "explanation": "Input is executed as code.",
                 "path": "app.py", "line": 1, "evidence": "eval(user_input)",
                 "fix": "Use a constrained parser.",
                 "test": "Prove expressions are treated as data.", "confidence": 0.9,
+                "trigger": "User input reaches eval.",
+                "impact": "An attacker can execute code.",
             }]}
-        if role == "correctness-reliability":
+        if role == "failure-hunter":
             return {"action": "final", "findings": []}
-        if role == "critic":
+        if role == "evidence-examiner":
             return {
                 "action": "final", "decisions": [
                     {
-                        "finding_index": index, "accepted": True,
-                        "objections": [], "confidence_adjustment": 0.0,
+                        "finding_index": index, "decision": "verified",
+                        "reason": "Changed-line evidence supports the trigger.",
+                        "confidence_adjustment": 0.0,
+                        "supporting_evidence_ids": [],
                     }
                     for index, _item in enumerate(task["candidates"])
                 ],
@@ -100,7 +116,7 @@ class LeadWorkerCollaborationTests(unittest.TestCase):
         self.store.create("task", "org/repo", 1, {
             "mode": "agentic",
             "enabled_agents": [
-                "lead", "security", "correctness-reliability", "critic",
+                "prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner",
             ],
         })
 
@@ -117,7 +133,11 @@ class LeadWorkerCollaborationTests(unittest.TestCase):
         summary = reviewer.collaboration_summary("task")
 
         self.assertIn("SEC-LEAD-REVISION", {item.rule_id for item in findings})
-        self.assertEqual("lead-workers", summary["collaboration"]["protocol"])
+        self.assertEqual("prism-review-v1", summary["collaboration"]["protocol"])
+        self.assertEqual("Review dynamic execution", summary["change_map"]["intent"])
+        self.assertEqual("block", summary["verdict"]["decision"])
+        self.assertEqual("verified", findings[0].verification)
+        self.assertIn("Changed-line evidence", findings[0].examiner_reason)
         self.assertEqual(2, client.security_calls)
         self.assertEqual(1, len(summary["collaboration"]["revision_results"]))
         self.assertEqual(
@@ -126,19 +146,20 @@ class LeadWorkerCollaborationTests(unittest.TestCase):
         )
         self.assertEqual(1, summary["collaboration"]["revision_rounds"])
         self.assertEqual(
-            1, client.calls.count(("lead", "assess-workers"))
+            1, client.calls.count(("prism-lead", "assess-workers"))
         )
         self.assertEqual(7, summary["execution"]["llm_calls"])
         session_events = {
             item["event"]
-            for item in summary["execution"]["agent_traces"]["lead-session"]
+            for item in summary["execution"]["agent_traces"]["prism-session"]
         }
         self.assertTrue({
             "assignment_created", "worker_reported", "revision_completed",
             "lead_activated", "lead_completed",
         }.issubset(session_events))
-        checkpoint = self.store.load_checkpoints("task")["agentic-lead-session"]
+        checkpoint = self.store.load_checkpoints("task")["agentic-prism-session"]
         self.assertEqual("completed", checkpoint["status"])
+        self.assertEqual("prism-review-v1", checkpoint["state"]["protocol"])
         self.assertEqual("completed", checkpoint["state"]["session"]["phase"])
 
     def test_completed_session_resumes_without_repeating_agent_calls(self):

@@ -41,17 +41,17 @@ ARM_TOPOLOGY = {
     },
     "multi-llm-no-critic": {
         "mode": "agentic",
-        "roles": ("lead", "security", "correctness-reliability"),
+        "roles": ("prism-lead", "scope-mapper", "failure-hunter"),
         "deterministic_scanners": True,
     },
     "full-agentic": {
         "mode": "agentic",
-        "roles": ("lead", "security", "correctness-reliability", "critic"),
+        "roles": ("prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"),
         "deterministic_scanners": True,
     },
     "full-agentic-evolved-skill": {
         "mode": "agentic",
-        "roles": ("lead", "security", "correctness-reliability", "critic"),
+        "roles": ("prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"),
         "deterministic_scanners": True,
     },
 }
@@ -338,7 +338,7 @@ class ProductArmReviewer:
                 collaboration.get("candidate_findings_before_critic", 0) or 0
             )
             if proposed == 0:
-                required.discard("critic")
+                required.discard("evidence-examiner")
         missing = sorted(role for role in required if actual[role] < 1)
         if missing:
             raise RuntimeError(
@@ -503,8 +503,8 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
             if collaboration_reader:
                 collaboration = collaboration_reader() or {}
                 decisions = (
-                    list(collaboration.get("critic_decisions") or [])
-                    if "critic" in set(collaboration.get("roles") or []) else []
+                    list(collaboration.get("examiner_decisions") or [])
+                    if "evidence-examiner" in set(collaboration.get("roles") or []) else []
                 )
                 result["critic_accepted"] = sum(
                     bool(item.get("accepted")) for item in decisions
@@ -514,7 +514,7 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
                 )
                 result["revision_requests"] = sum(
                     len(item.get("revision_requests") or [])
-                    for item in (collaboration.get("lead") or {}).get("assessments") or []
+                    for item in (collaboration.get("prism-lead") or {}).get("assessments") or []
                 )
                 result["revision_results"] = len(
                     collaboration.get("revision_results") or []

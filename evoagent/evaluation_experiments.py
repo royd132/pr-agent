@@ -149,7 +149,7 @@ class ControlledExperimentClient:
             }
         managed = json.loads(user)
         task = json.loads(managed["task"])
-        if role == "lead":
+        if role == "prism-lead":
             phase = task["phase"]
             if phase == "delegate":
                 requested = list(task.get("requested_agent_skills") or [])
@@ -166,12 +166,12 @@ class ControlledExperimentClient:
             if phase == "assess-workers":
                 return {
                     "action": "final", "revision_requests": [],
-                    "critic_objective": "Reject benchmark-specific benign scanner matches.",
+                    "examiner_objective": "Reject benchmark-specific benign scanner matches.",
                 }
             if phase == "finalize":
                 decisions = {
                     int(item["finding_index"]): bool(item.get("accepted"))
-                    for item in task.get("critic_decisions") or []
+                    for item in task.get("examiner_decisions") or []
                 }
                 indices = [
                     index for index, _item in enumerate(task["candidate_findings"])
@@ -181,9 +181,9 @@ class ControlledExperimentClient:
                     "action": "final", "accepted_finding_indices": indices,
                     "confidence_adjustments": [],
                 }
-        if role in {"security", "correctness-reliability"}:
+        if role in {"scope-mapper", "failure-hunter"}:
             return {"action": "final", "findings": []}
-        if role == "critic":
+        if role == "evidence-examiner":
             decisions = []
             for index, candidate in enumerate(task.get("candidates") or []):
                 evidence = str(candidate.get("evidence", ""))
@@ -191,9 +191,14 @@ class ControlledExperimentClient:
                     "test-placeholder" in evidence or "fixture-id" in evidence
                 )
                 decisions.append({
-                    "finding_index": index, "accepted": not benign_fixture,
-                    "objections": ["controlled benign fixture"] if benign_fixture else [],
+                    "finding_index": index,
+                    "decision": "rejected" if benign_fixture else "verified",
+                    "reason": (
+                        "Controlled benign fixture." if benign_fixture
+                        else "Candidate matches the controlled expected behavior."
+                    ),
                     "confidence_adjustment": 0.0,
+                    "supporting_evidence_ids": [],
                 })
             return {"action": "final", "decisions": decisions}
         raise ValueError("unsupported controlled role: %s" % role)

@@ -434,7 +434,7 @@ class ContextManager:
         domain_hits = [domain for domain in domains if domain and domain in lowered]
         score += len(domain_hits) * 15
         path_lower = normalized_path
-        if any(part in path_lower for part in ("auth", "security", "permission", "payment", "migration")):
+        if any(part in path_lower for part in ("auth", "scope-mapper", "permission", "payment", "migration")):
             score += 10
         symbols = list(dict.fromkeys(SYMBOL.findall(hunk.content)))[:20]
         changed = [
@@ -688,7 +688,7 @@ class ContextManager:
                         }
                     elif isinstance(child, list) and key in {
                         "candidate_findings", "candidates", "scanner_findings",
-                        "worker_results", "critic_decisions", "assignments",
+                        "worker_results", "examiner_decisions", "assignments",
                     }:
                         result[key] = [
                             {
@@ -735,7 +735,7 @@ class ContextManager:
                     if isinstance(item, dict)
                 ],
             }
-        for key in ("candidate_findings", "candidates", "critic_decisions"):
+        for key in ("candidate_findings", "candidates", "examiner_decisions"):
             if isinstance(value.get(key), list):
                 manifest[key] = [
                     {

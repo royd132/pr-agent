@@ -133,7 +133,7 @@ class Settings:
     context_observation_token_budget: int = 4000
     context_recent_observations: int = 2
     context_map_chunk_tokens: int = 3000
-    enabled_agents: str = "lead,security,correctness-reliability,critic"
+    enabled_agents: str = "prism-lead,scope-mapper,failure-hunter,evidence-examiner"
     llm_input_cost_per_million: float = 0.0
     llm_output_cost_per_million: float = 0.0
     evaluation_min_public_prs: int = 300
@@ -316,7 +316,7 @@ class Settings:
             ),
             enabled_agents=_setting(
                 "ENABLED_AGENTS",
-                "lead,security,correctness-reliability,critic",
+                "prism-lead,scope-mapper,failure-hunter,evidence-examiner",
             ),
             llm_input_cost_per_million=float(
                 _setting("LLM_INPUT_COST_PER_MILLION", "0")

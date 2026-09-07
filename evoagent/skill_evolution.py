@@ -102,7 +102,7 @@ class _ReplayTaskStore:
     def get(self, _task_id: str, _tenant_id: Optional[str] = None) -> dict:
         return {"input": {
             "mode": "agentic",
-            "enabled_agents": ["lead", "security", "correctness-reliability", "critic"],
+            "enabled_agents": ["prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"],
             "enabled_skills": [self.skill_name],
         }}
 
@@ -150,7 +150,7 @@ class AgentSkillReplayReviewer(Reviewer):
     def evaluation_config(self) -> dict:
         return {
             "mode": "agentic", "roles": [
-                "lead", "security", "correctness-reliability", "critic",
+                "prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner",
             ],
             "skill": self.skill.name,
             "per_role_token_budget": self.token_budget,

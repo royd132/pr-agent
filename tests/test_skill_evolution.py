@@ -52,26 +52,26 @@ class SkillAwareClient:
             }, 1)
         managed = json.loads(user)
         task = json.loads(managed["task"])
-        if role == "lead":
+        if role == "prism-lead":
             if task["phase"] == "delegate":
                 requested = task.get("requested_agent_skills") or []
                 selected = requested or [
                     item["name"] for item in task.get("available_agent_skills") or []
                 ]
                 return {"action": "final", "delegations": [{
-                    "assignment_id": "security-1", "worker": "security",
+                    "assignment_id": "security-1", "worker": "scope-mapper",
                     "objective": "Review project-specific dangerous calls",
                     "skills": selected,
                 }], "risk_level": "normal"}
             if task["phase"] == "assess-workers":
-                return {"action": "final", "revision_requests": [], "critic_objective": "Verify"}
+                return {"action": "final", "revision_requests": [], "examiner_objective": "Verify"}
             if task["phase"] == "finalize":
                 return {
                     "action": "final",
                     "accepted_finding_indices": list(range(len(task["candidate_findings"]))),
                     "confidence_adjustments": [],
                 }
-        if role == "security":
+        if role == "scope-mapper":
             instructions = "\n".join(
                 item.get("instructions", "") for item in task.get("active_agent_skills") or []
             )
@@ -86,12 +86,13 @@ class SkillAwareClient:
                     "call_chain": [{"path": "a.py", "line": 1, "symbol": "dangerous_call"}],
                 }]}
             return {"action": "final", "findings": []}
-        if role == "correctness-reliability":
+        if role == "failure-hunter":
             return {"action": "final", "findings": []}
-        if role == "critic":
+        if role == "evidence-examiner":
             return {"action": "final", "decisions": [{
-                "finding_index": index, "accepted": True, "objections": [],
-                "confidence_adjustment": 0.0,
+                "finding_index": index, "decision": "verified",
+                "reason": "Candidate evidence is sufficient.",
+                "confidence_adjustment": 0.0, "supporting_evidence_ids": [],
             } for index, _item in enumerate(task["candidates"])]}
         raise AssertionError(role)
 

@@ -27,19 +27,19 @@ class FakeChatClient:
                 role, self.provider, self.model,
                 {"prompt_tokens": 10, "completion_tokens": 5}, 1,
             )
-        if role == "lead":
+        if role == "prism-lead":
             managed = json.loads(user)
             task = json.loads(managed["task"])
             if task["phase"] == "delegate":
                 return {
                     "action": "final", "delegations": [
                         {
-                            "assignment_id": "security-1", "worker": "security",
+                            "assignment_id": "security-1", "worker": "scope-mapper",
                             "objective": "Trace user input", "files": ["app.py"],
                         },
                         {
                             "assignment_id": "reliability-1",
-                            "worker": "correctness-reliability",
+                            "worker": "failure-hunter",
                             "objective": "Check failures", "files": ["app.py"],
                         },
                     ], "risk_level": "high",
@@ -47,7 +47,7 @@ class FakeChatClient:
             if task["phase"] == "assess-workers":
                 return {
                     "action": "final", "revision_requests": [],
-                    "critic_objective": "Challenge every candidate.",
+                    "examiner_objective": "Challenge every candidate.",
                 }
             if task["phase"] == "finalize":
                 return {
@@ -58,23 +58,33 @@ class FakeChatClient:
                     "confidence_adjustments": [],
                 }
             raise AssertionError(task["phase"])
-        if role == "security":
+        if role == "scope-mapper":
             return {
-                "action": "final", "findings": [{
+                "action": "final", "change_map": {
+                    "intent": "Review dynamic execution",
+                    "surfaces": ["runtime"],
+                    "affected_files": ["app.py"],
+                    "test_gaps": [],
+                    "unknowns": [],
+                }, "findings": [{
                     "rule_id": "SEC-EVAL", "severity": "critical",
                     "title": "Dynamic execution", "explanation": "User input reaches eval.",
                     "path": "app.py", "line": 1, "evidence": "eval(user_input)",
                     "call_chain": [{"path": "app.py", "line": 1, "symbol": "eval"}],
                     "fix": "Use a strict parser.", "test": "Pass malicious expressions.",
                     "confidence": 0.9,
+                    "trigger": "User input reaches eval.",
+                    "impact": "Arbitrary code can run.",
                 }],
             }
-        if role == "correctness-reliability":
+        if role == "failure-hunter":
             return {"action": "final", "findings": []}
-        if role == "critic":
+        if role == "evidence-examiner":
             return {"action": "final", "decisions": [{
-                "finding_index": 0, "accepted": True, "objections": [],
+                "finding_index": 0, "decision": "verified",
+                "reason": "The changed call and chain support the finding.",
                 "confidence_adjustment": 0.0,
+                "supporting_evidence_ids": [],
             }]}
         if role == "evolution-root-cause":
             return {
@@ -82,7 +92,7 @@ class FakeChatClient:
                 "candidate": {
                     "prompt_additions": ["Require a call chain for high-risk claims."],
                     "few_shot_examples": [], "lead_delegation_rules": [],
-                    "tool_selection_policy": [], "budget_parameters": {"critic": 2000},
+                    "tool_selection_policy": [], "budget_parameters": {"evidence-examiner": 2000},
                 },
                 "rationale": "Improve evidence quality.",
             }
@@ -120,7 +130,7 @@ class PhaseImplementationTests(unittest.TestCase):
         store = TaskStore(self.path)
         store.create("task", "org/repo", 1, {
             "mode": "agentic",
-            "enabled_agents": ["lead", "security", "correctness-reliability", "critic"],
+            "enabled_agents": ["prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"],
         })
         reviewer = AgenticReviewer(store, FakeChatClient())
         parsed = parse_unified_diff(DIFF)
@@ -129,8 +139,10 @@ class PhaseImplementationTests(unittest.TestCase):
         self.assertEqual(["SEC-EVAL"], [item.rule_id for item in findings])
         self.assertEqual(6, summary["execution"]["llm_calls"])
         self.assertEqual("high", summary["collaboration"]["risk_level"])
+        self.assertEqual("Review dynamic execution", summary["change_map"]["intent"])
+        self.assertEqual("block", summary["verdict"]["decision"])
         self.assertEqual(
-            ["lead", "security", "correctness-reliability", "critic"],
+            ["prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"],
             summary["collaboration"]["roles"],
         )
         for role in summary["collaboration"]["roles"]:

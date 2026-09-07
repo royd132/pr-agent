@@ -37,25 +37,25 @@ class ExperimentClient:
             )
         if role == "single-reviewer":
             return {"findings": []}
-        if role == "lead":
+        if role == "prism-lead":
             managed = json.loads(user)
             task = json.loads(managed["task"])
             if task["phase"] == "delegate":
                 return {"action": "final", "delegations": [
                     {
-                        "assignment_id": "security-1", "worker": "security",
+                        "assignment_id": "security-1", "worker": "scope-mapper",
                         "objective": "Review security",
                     },
                     {
                         "assignment_id": "reliability-1",
-                        "worker": "correctness-reliability",
+                        "worker": "failure-hunter",
                         "objective": "Review reliability",
                     },
                 ]}
             if task["phase"] == "assess-workers":
                 return {
                     "action": "final", "revision_requests": [],
-                    "critic_objective": "Verify candidates",
+                    "examiner_objective": "Verify candidates",
                 }
             if task["phase"] == "finalize":
                 return {
@@ -65,15 +65,17 @@ class ExperimentClient:
                     ),
                     "confidence_adjustments": [],
                 }
-        if role in {"security", "correctness-reliability"}:
+        if role in {"scope-mapper", "failure-hunter"}:
             return {"action": "final", "findings": []}
-        if role == "critic":
+        if role == "evidence-examiner":
             managed = json.loads(user)
             task = json.loads(managed["task"])
             return {"action": "final", "decisions": [
                 {
-                    "finding_index": index, "accepted": True,
-                    "objections": [], "confidence_adjustment": 0.0,
+                    "finding_index": index, "decision": "verified",
+                    "reason": "Candidate evidence is sufficient.",
+                    "confidence_adjustment": 0.0,
+                    "supporting_evidence_ids": [],
                 }
                 for index, _item in enumerate(task["candidates"])
             ]}

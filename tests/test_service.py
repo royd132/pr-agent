@@ -30,17 +30,19 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual("SEC-EVAL", result["report"]["findings"][0]["rule_id"])
         self.assertEqual("agentic", result["report"]["run_mode"]["effective"])
         self.assertEqual(
-            ["lead", "security", "correctness-reliability", "critic"],
+            ["prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"],
             result["report"]["collaboration"]["roles"],
         )
         self.assertEqual(5, result["report"]["execution"]["llm_calls"])
         self.assertEqual("normal", result["report"]["collaboration"]["risk_level"])
+        self.assertEqual("Change application behavior", result["report"]["change_map"]["intent"])
+        self.assertEqual("block", result["report"]["verdict"]["decision"])
         role_calls = {}
         for call in result["report"]["execution"]["model_call_log"]:
             role_calls[call["role"]] = role_calls.get(call["role"], 0) + 1
         self.assertEqual({
-            "lead": 2, "security": 1,
-            "correctness-reliability": 1, "critic": 1,
+            "prism-lead": 2, "scope-mapper": 1,
+            "failure-hunter": 1, "evidence-examiner": 1,
         }, role_calls)
         self.assertEqual(0, result["report"]["collaboration"]["revision_rounds"])
         self.assertGreater(result["report"]["execution"]["tool_calls"], 0)
