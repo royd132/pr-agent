@@ -13,7 +13,7 @@ class FakeAgenticClient:
             )
         managed = json.loads(user)
         task = json.loads(managed["task"])
-        if role == "prism-lead":
+        if role == "coordinator":
             if task["phase"] == "delegate":
                 skills = [
                     item["name"] for item in task.get("available_agent_skills") or []
@@ -22,22 +22,22 @@ class FakeAgenticClient:
                     "action": "final",
                     "delegations": [
                         {
-                            "assignment_id": "security-1", "worker": "scope-mapper",
+                            "assignment_id": "security-1", "worker": "boundary-inspector",
                             "objective": "Review security",
                             "skills": skills,
                         },
                         {
                             "assignment_id": "reliability-1",
-                            "worker": "failure-hunter",
+                            "worker": "behavior-inspector",
                             "objective": "Review correctness and reliability",
                             "skills": skills,
                         },
                     ], "risk_level": "normal",
                 }
-            if task["phase"] == "assess-workers":
+            if task["phase"] == "assess-specialists":
                 return {
                     "action": "final", "revision_requests": [],
-                    "examiner_objective": "Verify every candidate against changed lines.",
+                    "audit_objective": "Blindly verify every candidate.",
                 }
             if task["phase"] == "finalize":
                 return {
@@ -46,10 +46,9 @@ class FakeAgenticClient:
                         range(len(task["candidate_findings"]))
                     ),
                     "confidence_adjustments": [],
-                    "resolution_summary": "Only examiner-verified findings are published.",
                 }
             raise AssertionError(task["phase"])
-        if role == "failure-hunter":
+        if role == "behavior-inspector":
             instructions = "\n".join(
                 item.get("instructions", "")
                 for item in task.get("active_agent_skills") or []
@@ -65,32 +64,19 @@ class FakeAgenticClient:
                     "fix": "Complete the behavior before merge.",
                     "test": "Add a regression test for the unfinished path.",
                     "confidence": 0.8,
-                    "trigger": "The changed TODO path reaches production behavior.",
-                    "impact": "Validation can remain incomplete at runtime.",
                 }]}
             return {"action": "final", "findings": []}
-        if role == "scope-mapper":
-            return {
-                "action": "final",
-                "change_map": {
-                    "intent": "Change application behavior",
-                    "surfaces": ["runtime"],
-                    "affected_files": ["a.py"],
-                    "test_gaps": ["changed path"],
-                    "unknowns": [],
-                },
-                "findings": [],
-            }
-        if role == "evidence-examiner":
+        if role == "boundary-inspector":
+            return {"action": "final", "findings": []}
+        if role == "evidence-auditor":
             return {
                 "action": "final",
                 "decisions": [
                     {
                         "finding_index": index,
-                        "decision": "verified",
-                        "reason": "The finding cites a changed line and a concrete trigger.",
+                        "accepted": True,
+                        "objections": [],
                         "confidence_adjustment": 0.0,
-                        "supporting_evidence_ids": [],
                     }
                     for index, _item in enumerate(task["candidates"])
                 ],

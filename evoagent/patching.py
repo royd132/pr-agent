@@ -122,11 +122,13 @@ def apply_file_patch(content: str, patch: FilePatch) -> str:
 
 
 class VerifiedPatchFixer:
+    """Generate and verify a repair first; publish only after explicit approval."""
+
     def __init__(self, client: JsonChatClient, verifier: RepairVerifier):
         self.client = client
         self.verifier = verifier
 
-    def create_fix_commits(
+    def prepare_fix(
         self, client, repository: str, pull_request: int, report: dict,
     ) -> dict:
         pull = client.get_pull_request(repository, pull_request)
@@ -181,7 +183,7 @@ class VerifiedPatchFixer:
                 "status": "suggestion-only", "branch": None, "commits": [],
                 "patch": patch_text, "verification": {"structural": structural},
                 "execution": ledger.summary(),
-                "note": "No repository test command is configured; this is a suggestion, not a successful automatic fix.",
+                "note": "No repository test command is configured; this remains a suggestion.",
             }
         archive = client.download_archive(source_repository, source_sha)
         baseline = self.verifier.verify_archive(archive, {})
@@ -198,22 +200,12 @@ class VerifiedPatchFixer:
                 "execution": ledger.summary(),
                 "note": "Patch was blocked by before/after sandbox verification.",
             }
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        branch = "diffprism/fix-pr-%d-%s" % (pull_request, stamp)
-        commit = client.create_atomic_commit(
-            repository, branch, source_sha, changed,
-            "fix: apply verified DiffPrism patch for PR #%d" % pull_request,
-        )
-        draft = client.create_draft_pull_request(
-            repository, "fix: verified DiffPrism patch for #%d" % pull_request,
-            branch, pull.get("base", {}).get("ref", "main"),
-            "LLM-generated patch. AST/CST, compilation and configured tests passed in an isolated checkout. This PR is intentionally a draft.",
-        )
         return {
-            "status": "verified-draft", "branch": branch, "source_sha": source_sha,
-            "commits": [{"sha": commit.get("sha"), "paths": sorted(changed)}],
-            "draft_pull_request": {"number": draft.get("number"), "url": draft.get("html_url")},
-            "patch": patch_text,
+            "status": "awaiting-approval", "branch": None, "commits": [],
+            "repository": repository, "pull_request": pull_request,
+            "source_repository": source_repository, "source_ref": source_ref,
+            "source_sha": source_sha, "base_ref": pull.get("base", {}).get("ref", "main"),
+            "paths": sorted(changed), "patch": patch_text,
             "behavioral_claims": generated.get("behavioral_claims") or [],
             "related_tests": generated.get("related_tests") or [],
             "verification": {
@@ -221,14 +213,84 @@ class VerifiedPatchFixer:
                 "after": patched, "comparison": comparison,
             },
             "execution": ledger.summary(),
-            "note": "Verified patch was published only as a draft pull request.",
+            "approval_required": True,
+            "note": (
+                "Patch passed structural and repository verification. No GitHub write has "
+                "occurred; explicit approval is required before creating a draft PR."
+            ),
         }
+
+    def publish_fix(
+        self, client, repository: str, pull_request: int, proposal: dict,
+    ) -> dict:
+        if proposal.get("status") != "awaiting-approval":
+            raise ValueError("repair proposal is not awaiting approval")
+        pull = client.get_pull_request(repository, pull_request)
+        current_sha = str((pull.get("head") or {}).get("sha", ""))
+        source_sha = str(proposal.get("source_sha", ""))
+        if not source_sha or current_sha != source_sha:
+            raise ValueError(
+                "pull request head changed after verification; generate and verify a new proposal"
+            )
+        source_ref = str(proposal.get("source_ref") or (pull.get("head") or {}).get("ref", ""))
+        source_repository = str(
+            proposal.get("source_repository")
+            or (pull.get("head") or {}).get("repo", {}).get("full_name")
+            or repository
+        )
+        paths = [str(item) for item in proposal.get("paths") or []]
+        patch_text = str(proposal.get("patch", ""))
+        if not paths or not patch_text:
+            raise ValueError("repair proposal is incomplete")
+        originals = {
+            path: client.get_file(source_repository, path, source_ref)["decoded_content"]
+            for path in paths
+        }
+        changed = dict(originals)
+        for patch in parse_unified_patch(patch_text, paths):
+            changed[patch.path] = apply_file_patch(originals[patch.path], patch)
+        changed = {path: content for path, content in changed.items() if content != originals[path]}
+        if not changed:
+            raise ValueError("approved patch no longer changes the source")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        branch = "tracereview/fix-pr-%d-%s" % (pull_request, stamp)
+        commit = client.create_atomic_commit(
+            repository, branch, source_sha, changed,
+            "fix: apply approved TraceReview patch for PR #%d" % pull_request,
+        )
+        draft = client.create_draft_pull_request(
+            repository, "fix: approved TraceReview patch for #%d" % pull_request,
+            branch, str(proposal.get("base_ref") or "main"),
+            (
+                "Human-approved repair proposal. AST/CST, compilation and configured tests "
+                "passed before publication. This pull request is intentionally a draft."
+            ),
+        )
+        return {
+            **proposal,
+            "status": "verified-draft", "branch": branch,
+            "commits": [{"sha": commit.get("sha"), "paths": sorted(changed)}],
+            "draft_pull_request": {"number": draft.get("number"), "url": draft.get("html_url")},
+            "approval_required": False, "approved": True,
+            "note": "Approved verified patch was published as a draft pull request.",
+        }
+
+    def create_fix_commits(self, client, repository: str, pull_request: int, report: dict) -> dict:
+        """Backward-compatible entry point; now prepares rather than auto-publishes."""
+        return self.prepare_fix(client, repository, pull_request, report)
 
 
 class SuggestionOnlyFixer:
-    def create_fix_commits(self, client, repository, pull_request, report):
+    def prepare_fix(self, client, repository, pull_request, report):
         return {
             "status": "suggestion-only", "branch": None, "commits": [],
             "suggestions": [item.get("fix", "") for item in report.get("findings", [])],
+            "approval_required": False,
             "note": "No model is configured. Suggestions are not described as an automatic fix.",
         }
+
+    def publish_fix(self, client, repository, pull_request, proposal):
+        raise ValueError("suggestion-only repair cannot be approved for publication")
+
+    def create_fix_commits(self, client, repository, pull_request, report):
+        return self.prepare_fix(client, repository, pull_request, report)

@@ -1,7 +1,6 @@
 """Product-backed agentic evaluation suite for labelled PRs."""
 from collections import Counter
 import json
-import math
 import random
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -18,41 +17,41 @@ from .telemetry import ExecutionLedger
 
 
 REQUIRED_ARMS = (
-    "multi-llm-no-critic", "full-agentic",
+    "routed-specialists", "routed-specialists-audited",
 )
 
 EXPERIMENT_ARMS = (
-    "single-llm",
-    "single-llm-scanner",
-    "multi-llm-no-critic",
-    "full-agentic",
-    "full-agentic-evolved-skill",
+    "model-baseline",
+    "model-plus-scanner",
+    "routed-specialists",
+    "routed-specialists-audited",
+    "routed-specialists-policy",
 )
 
 ARM_TOPOLOGY = {
-    "single-llm": {
+    "model-baseline": {
         "mode": "single",
         "roles": ("single-reviewer",),
         "deterministic_scanners": False,
     },
-    "single-llm-scanner": {
+    "model-plus-scanner": {
         "mode": "single",
         "roles": ("single-reviewer",),
         "deterministic_scanners": True,
     },
-    "multi-llm-no-critic": {
+    "routed-specialists": {
         "mode": "agentic",
-        "roles": ("prism-lead", "scope-mapper", "failure-hunter"),
+        "roles": ("coordinator", "boundary-inspector", "behavior-inspector"),
         "deterministic_scanners": True,
     },
-    "full-agentic": {
+    "routed-specialists-audited": {
         "mode": "agentic",
-        "roles": ("prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"),
+        "roles": ("coordinator", "boundary-inspector", "behavior-inspector", "evidence-auditor"),
         "deterministic_scanners": True,
     },
-    "full-agentic-evolved-skill": {
+    "routed-specialists-policy": {
         "mode": "agentic",
-        "roles": ("prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"),
+        "roles": ("coordinator", "boundary-inspector", "behavior-inspector", "evidence-auditor"),
         "deterministic_scanners": True,
     },
 }
@@ -138,7 +137,7 @@ class SingleModelReviewer(Reviewer):
         self, arm: str, client: JsonChatClient, total_token_budget: int,
         total_time_budget_seconds: int = 120,
     ):
-        if arm not in {"single-llm", "single-llm-scanner"}:
+        if arm not in {"model-baseline", "model-plus-scanner"}:
             raise ValueError("single-model reviewer received invalid arm: %s" % arm)
         if total_token_budget < 256:
             raise ValueError("single-model review requires at least 256 tokens")
@@ -262,8 +261,8 @@ class ProductArmReviewer:
     ):
         if arm not in ARM_TOPOLOGY or ARM_TOPOLOGY[arm]["mode"] != "agentic":
             raise ValueError("unknown evaluation arm: %s" % arm)
-        if arm == "full-agentic-evolved-skill" and not evolved_skill_artifact:
-            raise ValueError("full-agentic-evolved-skill requires an evolved Skill artifact")
+        if arm == "routed-specialists-policy" and not evolved_skill_artifact:
+            raise ValueError("routed-specialists-policy requires an evolved Skill artifact")
         topology = ARM_TOPOLOGY[arm]
         roles = tuple(topology["roles"])
         llm_role_count = max(1, len(roles))
@@ -332,14 +331,14 @@ class ProductArmReviewer:
         actual = Counter(
             str(item.get("role")) for item in calls if bool(item.get("ok", True))
         )
-        required = set(self.expected_roles)
-        if self.arm in {"full-agentic", "full-agentic-evolved-skill"}:
-            collaboration = self._last_summary.get("collaboration") or {}
-            proposed = int(
-                collaboration.get("candidate_findings_before_critic", 0) or 0
-            )
-            if proposed == 0:
-                required.discard("evidence-examiner")
+        collaboration = self._last_summary.get("collaboration") or {}
+        required = {"coordinator"}
+        required.update(
+            str(item.get("worker")) for item in collaboration.get("assignments") or []
+            if item.get("worker")
+        )
+        if (collaboration.get("audit_policy") or {}).get("invoked"):
+            required.add("evidence-auditor")
         missing = sorted(role for role in required if actual[role] < 1)
         if missing:
             raise RuntimeError(
@@ -352,6 +351,9 @@ class ProductArmReviewer:
 
     def evaluation_collaboration(self) -> dict:
         return dict(self._last_summary.get("collaboration") or {})
+
+    def evaluation_pre_gate_findings(self) -> list:
+        return list(self._last_summary.get("pre_gate_findings") or [])
 
     def evaluation_config(self) -> dict:
         return {
@@ -415,13 +417,13 @@ def experiment_reviewer_factories(
             arm, client, token_budget, total_time_budget_seconds,
             evolved_skill_artifact=(
                 evolved_skill_artifact
-                if arm == "full-agentic-evolved-skill" else None
+                if arm == "routed-specialists-policy" else None
             ),
         )
 
     selected = [
         arm for arm in EXPERIMENT_ARMS
-        if arm != "full-agentic-evolved-skill" or evolved_skill_artifact is not None
+        if arm != "routed-specialists-policy" or evolved_skill_artifact is not None
     ]
     return {
         arm: (lambda model, budget, selected_arm=arm: build(
@@ -467,10 +469,15 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
             "output_tokens": 0,
             "total_tokens": 0,
             "model_roles": {},
-            "critic_accepted": 0,
-            "critic_rejected": 0,
+            "auditor_accepted": 0,
+            "auditor_rejected": 0,
             "revision_requests": 0,
             "revision_results": 0,
+            "pre_gate_tp": 0,
+            "pre_gate_fp": 0,
+            "gate_fp_filtered": 0,
+            "gate_tp_lost": 0,
+            "gate_rejected": 0,
         })
         if result["execution_success"]:
             findings = recording.findings
@@ -481,6 +488,37 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
             matches = one_to_one_match(
                 expected, findings, self.line_tolerance
             )
+            pre_gate_reader = getattr(reviewer, "evaluation_pre_gate_findings", None)
+            if pre_gate_reader:
+                raw_pre = pre_gate_reader() or []
+                pre_findings = []
+                for raw in raw_pre:
+                    try:
+                        pre_findings.append(Finding(
+                            rule_id=str(raw.get("rule_id", "REVIEW")),
+                            severity=Severity(str(raw.get("severity", "medium"))),
+                            title=str(raw.get("title", "Review finding")),
+                            explanation=str(raw.get("explanation", "")),
+                            path=str(raw.get("path", "")), line=int(raw.get("line", 0)),
+                            evidence=str(raw.get("evidence", "")),
+                            fix=str(raw.get("fix", "")), test=str(raw.get("test", "")),
+                            confidence=float(raw.get("confidence", 0.7)),
+                            evidence_refs=list(raw.get("evidence_refs") or []),
+                            call_chain=list(raw.get("call_chain") or []),
+                            source=str(raw.get("source", "unknown")),
+                            cwe=str(raw.get("cwe", "")).strip().upper() or None,
+                            category=str(raw.get("category", "general")),
+                            precondition=str(raw.get("precondition", "")),
+                            impact=str(raw.get("impact", "")),
+                            evidence_strength=str(raw.get("evidence_strength", "unrated")),
+                        ))
+                    except (TypeError, ValueError):
+                        continue
+                pre_matches = one_to_one_match(expected, pre_findings, self.line_tolerance)
+                result["pre_gate_tp"] = len(pre_matches)
+                result["pre_gate_fp"] = max(0, len(pre_findings) - len(pre_matches))
+                result["gate_fp_filtered"] = max(0, result["pre_gate_fp"] - result["fp"])
+                result["gate_tp_lost"] = max(0, result["pre_gate_tp"] - result["tp"])
             for match in matches:
                 finding = findings[match.predicted_index]
                 result["exact_location_hits"] += int(match.location_distance == 0)
@@ -504,21 +542,24 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
             if collaboration_reader:
                 collaboration = collaboration_reader() or {}
                 decisions = (
-                    list(collaboration.get("examiner_decisions") or [])
-                    if "evidence-examiner" in set(collaboration.get("roles") or []) else []
+                    list(collaboration.get("audit_decisions") or [])
+                    if "evidence-auditor" in set(collaboration.get("roles") or []) else []
                 )
-                result["critic_accepted"] = sum(
+                result["auditor_accepted"] = sum(
                     bool(item.get("accepted")) for item in decisions
                 )
-                result["critic_rejected"] = sum(
+                result["auditor_rejected"] = sum(
                     not bool(item.get("accepted")) for item in decisions
                 )
                 result["revision_requests"] = sum(
                     len(item.get("revision_requests") or [])
-                    for item in (collaboration.get("prism-lead") or {}).get("assessments") or []
+                    for item in (collaboration.get("coordinator") or {}).get("assessments") or []
                 )
                 result["revision_results"] = len(
                     collaboration.get("revision_results") or []
+                )
+                result["gate_rejected"] = int(
+                    (collaboration.get("gate_effect") or {}).get("rejected_findings", 0) or 0
                 )
         return result
 
@@ -529,11 +570,12 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
             "invalid_comments": 0, "exact_location_hits": 0, "evidence_hits": 0,
             "accepted_comments": 0, "closed_comments": 0,
             "latency_ms": 0, "cost_microusd": 0,
-            "latency_samples_ms": [],
             "llm_calls": 0, "input_tokens": 0,
             "output_tokens": 0, "total_tokens": 0,
-            "critic_accepted": 0, "critic_rejected": 0,
+            "auditor_accepted": 0, "auditor_rejected": 0,
             "revision_requests": 0, "revision_results": 0,
+            "pre_gate_tp": 0, "pre_gate_fp": 0,
+            "gate_fp_filtered": 0, "gate_tp_lost": 0, "gate_rejected": 0,
         })
         return values
 
@@ -544,12 +586,13 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
             "invalid_comments", "exact_location_hits", "evidence_hits",
             "accepted_comments", "closed_comments", "latency_ms",
             "llm_calls", "input_tokens", "output_tokens", "total_tokens",
-            "critic_accepted", "critic_rejected",
+            "auditor_accepted", "auditor_rejected",
             "revision_requests", "revision_results",
+            "pre_gate_tp", "pre_gate_fp", "gate_fp_filtered",
+            "gate_tp_lost", "gate_rejected",
         ):
             totals[field] += int(result.get(field, 0))
         totals["cost_microusd"] += int(float(result.get("cost_usd", 0)) * 1_000_000)
-        totals["latency_samples_ms"].append(int(result.get("latency_ms", 0)))
 
     @staticmethod
     def _metrics(totals):
@@ -557,9 +600,6 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
         cases = totals["cases"] or 1
         tp = totals["tp"] or 1
         commented = totals["accepted_comments"] + totals["closed_comments"]
-        latencies = sorted(totals.get("latency_samples_ms") or [])
-        p95 = latencies[max(0, math.ceil(len(latencies) * 0.95) - 1)] if latencies else 0
-        verified = totals["critic_accepted"]
         values.update({
             "invalid_comments_per_pr": round(totals["invalid_comments"] / cases, 4),
             "exact_line_accuracy": round(totals["exact_location_hits"] / tp, 4),
@@ -571,10 +611,6 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
                 totals["cost_microusd"] / 1_000_000 / cases, 8
             ),
             "average_latency_ms_per_pr": round(totals["latency_ms"] / cases, 2),
-            "p95_review_latency_ms": p95,
-            "cost_per_verified_finding_usd": round(
-                totals["cost_microusd"] / 1_000_000 / verified, 8
-            ) if verified else 0.0,
             "average_llm_calls_per_pr": round(totals["llm_calls"] / cases, 4),
             "average_input_tokens_per_pr": round(totals["input_tokens"] / cases, 2),
             "average_output_tokens_per_pr": round(totals["output_tokens"] / cases, 2),
@@ -582,16 +618,26 @@ class ProductionEvaluationHarness(EndToEndEvaluationHarness):
             "failure_rate": round(
                 1 - totals["execution_successes"] / cases, 4
             ),
-            "critic_acceptance_rate": round(
-                totals["critic_accepted"]
-                / (totals["critic_accepted"] + totals["critic_rejected"]), 4
-            ) if totals["critic_accepted"] + totals["critic_rejected"] else None,
-            "critic_accepted_per_pr": round(totals["critic_accepted"] / cases, 4),
-            "critic_rejected_per_pr": round(totals["critic_rejected"] / cases, 4),
+            "auditor_acceptance_rate": round(
+                totals["auditor_accepted"]
+                / (totals["auditor_accepted"] + totals["auditor_rejected"]), 4
+            ) if totals["auditor_accepted"] + totals["auditor_rejected"] else None,
+            "auditor_accepted_per_pr": round(totals["auditor_accepted"] / cases, 4),
+            "auditor_rejected_per_pr": round(totals["auditor_rejected"] / cases, 4),
             "revision_requests_per_pr": round(totals["revision_requests"] / cases, 4),
             "revision_results_per_pr": round(totals["revision_results"] / cases, 4),
+            "pre_gate_precision": round(
+                totals["pre_gate_tp"] / (totals["pre_gate_tp"] + totals["pre_gate_fp"]), 4
+            ) if totals["pre_gate_tp"] + totals["pre_gate_fp"] else None,
+            "post_gate_precision": values.get("precision"),
+            "gate_fp_filter_rate": round(
+                totals["gate_fp_filtered"] / totals["pre_gate_fp"], 4
+            ) if totals["pre_gate_fp"] else None,
+            "gate_tp_loss_rate": round(
+                totals["gate_tp_lost"] / totals["pre_gate_tp"], 4
+            ) if totals["pre_gate_tp"] else None,
+            "gate_rejected_per_pr": round(totals["gate_rejected"] / cases, 4),
         })
-        values.pop("latency_samples_ms", None)
         return values
 
 
@@ -601,7 +647,6 @@ DEFAULT_COMPARISON_METRICS = (
     "evidence_accuracy", "invalid_comments_per_pr",
     "average_total_tokens_per_pr", "average_latency_ms_per_pr",
     "average_cost_usd_per_pr", "failure_rate",
-    "p95_review_latency_ms", "cost_per_verified_finding_usd",
 )
 
 
@@ -742,45 +787,45 @@ class FairAblationSuite:
                 "average_total_tokens_per_pr": arms[name]["metrics"]["average_total_tokens_per_pr"],
                 "average_latency_ms_per_pr": arms[name]["metrics"]["average_latency_ms_per_pr"],
                 "average_cost_usd_per_pr": arms[name]["metrics"]["average_cost_usd_per_pr"],
-                "critic_acceptance_rate": arms[name]["metrics"]["critic_acceptance_rate"],
-                "critic_rejected_per_pr": arms[name]["metrics"]["critic_rejected_per_pr"],
+                "auditor_acceptance_rate": arms[name]["metrics"]["auditor_acceptance_rate"],
+                "auditor_rejected_per_pr": arms[name]["metrics"]["auditor_rejected_per_pr"],
                 "revision_requests_per_pr": arms[name]["metrics"]["revision_requests_per_pr"],
                 "revision_results_per_pr": arms[name]["metrics"]["revision_results_per_pr"],
             }
-        no_critic_holdout = self._split_view(
-            arms["multi-llm-no-critic"], "holdout",
+        no_auditor_holdout = self._split_view(
+            arms["routed-specialists"], "holdout",
         )
-        full_holdout = self._split_view(arms["full-agentic"], "holdout")
+        full_holdout = self._split_view(arms["routed-specialists-audited"], "holdout")
         candidate = full_holdout["metrics"]
-        critic_comparison = self._comparison(
-            no_critic_holdout, full_holdout, 200,
+        auditor_comparison = self._comparison(
+            no_auditor_holdout, full_holdout, 200,
         )
-        no_critic = no_critic_holdout["metrics"]
-        critic_false_positive_non_regression = (
+        no_auditor = no_auditor_holdout["metrics"]
+        auditor_false_positive_non_regression = (
             candidate["invalid_comments_per_pr"]
-            <= no_critic["invalid_comments_per_pr"]
+            <= no_auditor["invalid_comments_per_pr"]
         )
-        critic_recall_non_regression = candidate["recall"] >= no_critic["recall"] - 0.01
-        critic_statistically_positive = (
-            critic_comparison["f1"]["ci95"][0] > 0
+        auditor_recall_non_regression = candidate["recall"] >= no_auditor["recall"] - 0.01
+        auditor_statistically_positive = (
+            auditor_comparison["f1"]["ci95"][0] > 0
             or (
-                critic_comparison["precision"]["ci95"][0] > 0
-                and critic_recall_non_regression
+                auditor_comparison["precision"]["ci95"][0] > 0
+                and auditor_recall_non_regression
             )
         )
         comparisons = {
             "scope": "hidden-holdout",
-            "critic_vs_no_critic": critic_comparison,
+            "auditor_vs_no_auditor": auditor_comparison,
         }
         pair_specs = (
-            ("scanner_vs_single", "single-llm", "single-llm-scanner", 400),
+            ("scanner_vs_single", "model-baseline", "model-plus-scanner", 400),
             (
-                "multi_agent_vs_single_scanner", "single-llm-scanner",
-                "multi-llm-no-critic", 600,
+                "multi_agent_vs_single_scanner", "model-plus-scanner",
+                "routed-specialists", 600,
             ),
             (
-                "evolved_skill_vs_full_agentic", "full-agentic",
-                "full-agentic-evolved-skill", 800,
+                "evolved_skill_vs_full_agentic", "routed-specialists-audited",
+                "routed-specialists-policy", 800,
             ),
         )
         for label, left_name, right_name, seed_offset in pair_specs:
@@ -795,22 +840,22 @@ class FairAblationSuite:
             "requested_arms": list(self.arm_order),
             "omitted_arms": [name for name in EXPERIMENT_ARMS if name not in arms],
             "comparisons": comparisons,
-            "critic_gate": {
+            "auditor_gate": {
                 "passed": bool(
-                    readiness["ready"] and critic_statistically_positive
-                    and critic_false_positive_non_regression
-                    and critic_recall_non_regression
+                    readiness["ready"] and auditor_statistically_positive
+                    and auditor_false_positive_non_regression
+                    and auditor_recall_non_regression
                 ),
-                "statistically_positive": critic_statistically_positive,
-                "false_positive_non_regression": critic_false_positive_non_regression,
-                "recall_non_regression_with_1pp_tolerance": critic_recall_non_regression,
+                "statistically_positive": auditor_statistically_positive,
+                "false_positive_non_regression": auditor_false_positive_non_regression,
+                "recall_non_regression_with_1pp_tolerance": auditor_recall_non_regression,
                 "production_dataset_ready": readiness["ready"],
                 "decision": (
-                    "keep-critic" if (
-                        readiness["ready"] and critic_statistically_positive
-                        and critic_false_positive_non_regression
-                        and critic_recall_non_regression
-                    ) else "critic-not-proven"
+                    "keep-auditor" if (
+                        readiness["ready"] and auditor_statistically_positive
+                        and auditor_false_positive_non_regression
+                        and auditor_recall_non_regression
+                    ) else "auditor-not-proven"
                 ),
             },
             "claim_scope": (

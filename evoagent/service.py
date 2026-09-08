@@ -19,7 +19,6 @@ from .memory import MemoryManager
 from .models import TaskState, TraceEvent
 from .observability import AlertManager, Observability
 from .postgres_store import create_store
-from .presentation import present_review_pack
 from .report import to_markdown
 from .reviewer import (
     OpenAICompatibleReviewer, ReliabilityRuleReviewer, SecurityRuleReviewer,
@@ -147,7 +146,7 @@ class ReviewService:
             item.strip() for item in self.settings.enabled_agents.split(",") if item.strip()
         }
         unknown = enabled.difference({
-            "prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"
+            "coordinator", "boundary-inspector", "behavior-inspector", "evidence-auditor"
         })
         if unknown:
             raise ValueError("unsupported enabled Agent role(s): %s" % ", ".join(sorted(unknown)))
@@ -217,7 +216,7 @@ class ReviewService:
 
     def list_skills(self, tenant_id: str) -> list:
         scanners = [item for item in self.registry.list() if item.get("kind") == "scanner"]
-        skills = scanners + [{
+        return scanners + [{
             "name": skill.name, "version": skill.version,
             "description": skill.description, "source": skill.source,
             "kind": "agent-skill", "sandboxed": False,
@@ -225,7 +224,6 @@ class ReviewService:
             "content_sha256": skill.content_sha256,
             "resources": list(skill.resource_paths),
         } for skill in self._active_agent_skills(tenant_id)]
-        return [present_review_pack(skill) for skill in skills]
 
     def _validate_review(self, repository: str, diff: str) -> None:
         if not repository or len(repository) > 250:
@@ -376,7 +374,8 @@ class ReviewService:
                 client = self.github_client_for_installation(payload.get("installation_id"))
                 client.upsert_comment(
                     payload["github_issue_url"], to_markdown(report.to_dict()),
-                    "<!-- evoagent-review:%s -->" % task_id,
+                    "<!-- tracereview-review:%s -->" % task_id,
+                    legacy_markers=("<!-- evoagent-review:%s -->" % task_id,),
                 )
         except Exception:
             metrics.inc("reviews_failed_total")
@@ -474,11 +473,45 @@ class ReviewService:
         actual_tenant = task.get("tenant_id") or tenant_id or "default"
         if not self.store.repository_allowed(actual_tenant, task["repository"], True):
             raise PermissionError("automatic repair is not enabled for this repository")
-        result = self.fixer.create_fix_commits(
+        result = self.fixer.prepare_fix(
             self.github_client_for_installation(installation_id),
             task["repository"], task["pull_request"], task["report"],
         )
+        if result.get("status") == "awaiting-approval":
+            self.store.save_checkpoint(
+                task_id, "repair-proposal", result, "completed", 1
+            )
         metrics.inc("fix_runs_total")
+        return result
+
+    def approve_fix(
+        self, task_id: str, installation_id: Optional[int] = None,
+        tenant_id: Optional[str] = None,
+    ) -> dict:
+        """Publish a previously verified repair only after an explicit approval call."""
+        task = self.store.get(task_id, tenant_id)
+        if not task or not task.get("report"):
+            raise ValueError("completed task not found")
+        if task.get("pull_request") is None:
+            raise ValueError("fix approval requires a GitHub pull request task")
+        actual_tenant = task.get("tenant_id") or tenant_id or "default"
+        if not self.store.repository_allowed(actual_tenant, task["repository"], True):
+            raise PermissionError("automatic repair is not enabled for this repository")
+        checkpoints = self.store.load_checkpoints(task_id)
+        proposal_checkpoint = checkpoints.get("repair-proposal") or {}
+        proposal = dict(proposal_checkpoint.get("state") or {})
+        if proposal_checkpoint.get("status") != "completed" or not proposal:
+            raise ValueError("no verified repair proposal is awaiting approval")
+        if proposal.get("status") != "awaiting-approval":
+            raise ValueError("repair proposal is not awaiting approval")
+        result = self.fixer.publish_fix(
+            self.github_client_for_installation(installation_id),
+            task["repository"], task["pull_request"], proposal,
+        )
+        self.store.save_checkpoint(
+            task_id, "repair-publication", result, "completed", 1
+        )
+        metrics.inc("fix_approved_total")
         return result
 
     def record_feedback(
@@ -535,7 +568,7 @@ class ReviewService:
     def _validate_enabled_agents(enabled_agents: Optional[list]) -> None:
         if enabled_agents is None:
             return
-        allowed = {"prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"}
+        allowed = {"coordinator", "boundary-inspector", "behavior-inspector", "evidence-auditor"}
         unknown = set(enabled_agents).difference(allowed)
         if unknown:
             raise ValueError("unsupported enabled Agent role(s): %s" % ", ".join(sorted(unknown)))

@@ -211,7 +211,7 @@ class RegressionEvaluator:
 
 
 class EvolutionEngine:
-    """Prompt evolution backed by replay evaluation, audit records and activation gates."""
+    """Feedback-driven review-policy optimization with replay gates and human promotion."""
 
     FORBIDDEN = ("ignore previous", "disable safety", "bypass", "直接执行生产")
     FEEDBACK_RULE_ID = re.compile(r"^[A-Z][A-Z0-9_-]{1,79}$")
@@ -338,11 +338,11 @@ class EvolutionEngine:
         if not skill_name or len(skill_name) > 120:
             raise ValueError("skill_name is required and must be at most 120 characters")
         with self._lock:
-            return self._propose(skill_name, prompt, regression_score)
+            return self._propose(skill_name, prompt, regression_score, activation_policy="manual")
 
     def _propose(
         self, skill_name: str, prompt: str, regression_score: Optional[float],
-        activation_policy: str = "auto",
+        activation_policy: str = "manual",
     ) -> Dict[str, Any]:
         safety = self.safety_evaluate(prompt)
         active = self.store.get_active_skill_version(skill_name)
@@ -412,11 +412,11 @@ class EvolutionEngine:
                 "holdout_non_regression": holdout_safe,
             })
             if no_errors and improved and validation_safe and holdout_safe:
-                decision = "activated" if activation_policy == "auto" else "shadow_ready"
+                decision = "activated" if activation_policy == "auto" else "awaiting_approval"
                 reason = (
                     "candidate improved on validation and passed the non-regression holdout gate"
                     if decision == "activated" else
-                    "candidate passed replay gates and is awaiting shadow/canary approval"
+                    "candidate passed replay gates and requires explicit human activation"
                 )
             else:
                 decision = "rejected"
@@ -477,9 +477,14 @@ class EvolutionEngine:
             "run_id": run["id"],
         }
 
-    def rollback(self, skill_name: str, version: int) -> bool:
+    def approve(self, skill_name: str, version: int) -> bool:
+        """Explicit human promotion after replay gates have passed."""
         with self._lock:
             return self.store.activate_skill_version(skill_name, version)
+
+    def rollback(self, skill_name: str, version: int) -> bool:
+        # Historical endpoint name kept for compatibility; it selects a version.
+        return self.approve(skill_name, version)
 
     def auto_propose(
         self, skill_name: str = "llm-review", tenant_id: Optional[str] = None,
@@ -497,7 +502,7 @@ class EvolutionEngine:
                     "candidate_change": generated,
                     "failure_cases_used": len(cases), "run_id": None,
                 }
-            result = self._propose(skill_name, candidate, None, activation_policy="shadow")
+            result = self._propose(skill_name, candidate, None, activation_policy="manual")
             result["candidate_change"] = generated
             result["failure_cases_used"] = len(cases)
             result["rollback_point"] = (

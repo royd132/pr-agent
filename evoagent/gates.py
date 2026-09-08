@@ -25,7 +25,7 @@ class FindingGate:
     def apply(self, findings: Iterable[Finding], parsed: ParsedDiff) -> GateResult:
         valid_locations = {(item.path, item.line): item.content for item in parsed.added_lines}
         accepted, rejected = [], []
-        counters = {"format": 0, "evidence": 0, "confidence": 0, "release": 0}
+        counters = {"format": 0, "evidence": 0, "severity": 0, "confidence": 0, "release": 0}
         for finding in findings:
             reasons = []
             location = (finding.path, finding.line)
@@ -55,6 +55,28 @@ class FindingGate:
                     "evidence gate: high-risk finding requires AST/scanner/call-chain evidence"
                 )
                 counters["evidence"] += 1
+
+            strength = (
+                "strong" if strong_refs or finding.call_chain else
+                "moderate" if exact_line or valid_refs else
+                "weak"
+            )
+            finding.evidence_strength = strength
+            model_source = finding.source in {
+                "boundary-inspector", "behavior-inspector", "single-reviewer"
+            } or str(finding.source).startswith("llm")
+            contract_declared = bool(
+                finding.category != "general" or finding.precondition.strip() or finding.impact.strip()
+            )
+            if (
+                finding.severity in {Severity.CRITICAL, Severity.HIGH}
+                and model_source and contract_declared
+                and (not finding.precondition.strip() or not finding.impact.strip())
+            ):
+                reasons.append(
+                    "severity gate: declared high-risk contract requires both precondition and impact"
+                )
+                counters["severity"] += 1
             if finding.confidence < self.minimum_confidence:
                 reasons.append("confidence gate: score below %.2f" % self.minimum_confidence)
                 counters["confidence"] += 1
@@ -68,6 +90,10 @@ class FindingGate:
                 "passed": not reasons, "reasons": reasons,
                 "exact_location_evidence": exact_line,
                 "strong_evidence_count": len(strong_refs),
+                "evidence_strength": finding.evidence_strength,
+                "precondition_present": bool(finding.precondition.strip()),
+                "impact_present": bool(finding.impact.strip()),
+                "severity_contract_declared": contract_declared,
             }
             if reasons:
                 rejected.append({
@@ -81,6 +107,7 @@ class FindingGate:
             {
                 "format": {"rejected": counters["format"]},
                 "evidence": {"rejected": counters["evidence"]},
+                "severity": {"rejected": counters["severity"]},
                 "confidence": {
                     "minimum": self.minimum_confidence,
                     "rejected": counters["confidence"],

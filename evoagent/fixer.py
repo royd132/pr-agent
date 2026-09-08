@@ -117,7 +117,12 @@ class SafeFixer:
             tree.body.insert(0, ast.Import(names=[ast.alias(name="os")]))
         ast.fix_missing_locations(tree)
         value = ast.unparse(tree) + "\n"
-        value = re.sub(r"os\.environ\['([^']+)'\]", r'os.environ["\1"]', value)
+        # Keep deterministic repair output stable across Python minor versions.
+        # ast.unparse currently prefers single quotes for string subscripts; the
+        # repair contract uses double quotes for environment variable keys.
+        value = re.sub(
+            r"os\.environ\['([A-Z0-9_]+)'\]", r'os.environ["\1"]', value
+        )
         compile(value, path, "exec")
         return {"content": value, "rules": sorted(set(changed))}
 
@@ -130,7 +135,7 @@ class SafeFixer:
         source_sha = pull["head"]["sha"]
         source_repository = pull["head"].get("repo", {}).get("full_name") or repository
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-        branch = "diffprism/fix-pr-%d-%s" % (pull_request, stamp)
+        branch = "tracereview/fix-pr-%d-%s" % (pull_request, stamp)
         planned = []
         by_path = {}
         for finding in report.get("findings", []):
@@ -159,11 +164,11 @@ class SafeFixer:
             }
         commit = client.create_atomic_commit(
             repository, branch, source_sha, files,
-            "fix: apply verified DiffPrism repairs for PR #%d" % pull_request,
+            "fix: apply verified TraceReview repairs for PR #%d" % pull_request,
         )
         draft = client.create_draft_pull_request(
             repository,
-            "fix: verified DiffPrism repairs for #%d" % pull_request,
+            "fix: verified TraceReview repairs for #%d" % pull_request,
             branch, pull.get("base", {}).get("ref", "main"),
             "Automated deterministic repair. All configured compile and test gates passed.",
         )

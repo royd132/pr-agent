@@ -108,7 +108,7 @@ class RuntimeMemoryTests(unittest.TestCase):
                 task = json.loads(managed["task"])
                 seen.append(task.get("working_memory"))
                 if ledger:
-                    ledger.record_model("scope-mapper", "fake", "fake", {
+                    ledger.record_model("security", "fake", "fake", {
                         "prompt_tokens": 10, "completion_tokens": 3,
                     }, 1)
                 if len(seen) == 1:
@@ -125,7 +125,7 @@ class RuntimeMemoryTests(unittest.TestCase):
             )
 
         role = BoundedRole(
-            "scope-mapper", "Use facts.", ToolThenFinalClient(), 1000, 10,
+            "boundary-inspector", "Use facts.", ToolThenFinalClient(), 1000, 10,
             context_manager=ContextManager(), working_memory_supplier=supplier,
             observation_sink=sink,
         )
@@ -144,7 +144,7 @@ class RuntimeMemoryTests(unittest.TestCase):
 
     def test_task_consolidation_releases_working_memory_but_keeps_episode(self):
         memory = MemoryManager(self.store)
-        memory.remember_observation("tenant-a", "org/repo", "task", "scope-mapper", {
+        memory.remember_observation("tenant-a", "org/repo", "task", "boundary-inspector", {
             "step": 1, "tool": "symbol", "ok": True,
             "result": {"evidence_id": "symbol:auth", "output": {"callers": ["api"]}},
         })
@@ -157,25 +157,25 @@ class RuntimeMemoryTests(unittest.TestCase):
 
     def test_working_memory_is_isolated_by_agent_role(self):
         memory = MemoryManager(self.store)
-        memory.remember_observation("tenant-a", "org/repo", "task", "scope-mapper", {
+        memory.remember_observation("tenant-a", "org/repo", "task", "boundary-inspector", {
             "step": 1, "tool": "lookup", "ok": True,
             "result": {"evidence_id": "security:auth", "output": "security fact"},
         })
-        memory.remember_observation("tenant-a", "org/repo", "task", "failure-hunter", {
+        memory.remember_observation("tenant-a", "org/repo", "task", "behavior-inspector", {
             "step": 1, "tool": "lookup", "ok": True,
             "result": {"evidence_id": "correctness:auth", "output": "correctness fact"},
         })
 
         security = memory.recall_working(
-            "tenant-a", "org/repo", "task", agent="scope-mapper",
+            "tenant-a", "org/repo", "task", agent="boundary-inspector",
         )
-        critic = memory.recall_working(
-            "tenant-a", "org/repo", "task", agent="evidence-examiner",
+        auditor = memory.recall_working(
+            "tenant-a", "org/repo", "task", agent="evidence-auditor",
         )
 
         self.assertEqual(1, len(security))
         self.assertIn("security:auth", security[0]["content"])
-        self.assertEqual([], critic)
+        self.assertEqual([], auditor)
 
 
 if __name__ == "__main__":

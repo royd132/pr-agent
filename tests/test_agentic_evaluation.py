@@ -29,7 +29,7 @@ class FakeClient:
                 role, self.provider, self.model,
                 {"prompt_tokens": 10, "completion_tokens": 5}, 1,
             )
-        if role == "prism-lead":
+        if role == "coordinator":
             managed = json.loads(user)
             task = json.loads(managed["task"])
             if task["phase"] == "delegate":
@@ -37,20 +37,20 @@ class FakeClient:
                     "action": "final",
                     "delegations": [
                         {
-                            "assignment_id": "security-1", "worker": "scope-mapper",
+                            "assignment_id": "security-1", "worker": "boundary-inspector",
                             "objective": "Review security",
                         },
                         {
                             "assignment_id": "reliability-1",
-                            "worker": "failure-hunter",
+                            "worker": "behavior-inspector",
                             "objective": "Review correctness",
                         },
                     ],
                 }
-            if task["phase"] == "assess-workers":
+            if task["phase"] == "assess-specialists":
                 return {
                     "action": "final", "revision_requests": [],
-                    "examiner_objective": "Blindly verify every candidate.",
+                    "audit_objective": "Blindly verify every candidate.",
                 }
             if task["phase"] == "finalize":
                 return {
@@ -61,9 +61,9 @@ class FakeClient:
                     "confidence_adjustments": [],
                 }
             raise AssertionError(task["phase"])
-        if role in {"scope-mapper", "failure-hunter"}:
+        if role in {"boundary-inspector", "behavior-inspector"}:
             return {"action": "final", "findings": []}
-        if role == "evidence-examiner":
+        if role == "evidence-auditor":
             managed = json.loads(user)
             task = json.loads(managed["task"])
             return {
@@ -71,10 +71,9 @@ class FakeClient:
                 "decisions": [
                     {
                         "finding_index": index,
-                        "decision": "verified",
-                        "reason": "Candidate evidence is sufficient.",
+                        "accepted": True,
+                        "objections": [],
                         "confidence_adjustment": 0.0,
-                        "supporting_evidence_ids": [],
                     }
                     for index, _item in enumerate(task["candidates"])
                 ],
@@ -86,13 +85,13 @@ class AgenticEvaluationTests(unittest.TestCase):
     def test_agentic_arms_share_exactly_fourteen_rules_and_real_role_topologies(self):
         self.assertEqual(14, len(LocalRuleReviewer.RULES) + len(ContextRuleReviewer.RULES))
         expected_calls = {
-            "multi-llm-no-critic": {
-                "prism-lead": 2, "scope-mapper": 1,
-                "failure-hunter": 1,
+            "routed-specialists": {
+                "coordinator": 2, "boundary-inspector": 1,
+                "behavior-inspector": 1,
             },
-            "full-agentic": {
-                "prism-lead": 2, "scope-mapper": 1,
-                "failure-hunter": 1, "evidence-examiner": 1,
+            "routed-specialists-audited": {
+                "coordinator": 2, "boundary-inspector": 1,
+                "behavior-inspector": 1, "evidence-auditor": 1,
             },
         }
         parsed = parse_unified_diff(DIFF)
@@ -129,13 +128,13 @@ class AgenticEvaluationTests(unittest.TestCase):
         )
         report = suite.run(cases)
         self.assertFalse(report["dataset"]["ready"])
-        self.assertFalse(report["critic_gate"]["passed"])
+        self.assertFalse(report["auditor_gate"]["passed"])
         self.assertEqual(
             {
-                "prism-lead": 6, "scope-mapper": 3,
-                "failure-hunter": 3, "evidence-examiner": 3,
+                "coordinator": 6, "boundary-inspector": 3,
+                "behavior-inspector": 3, "evidence-auditor": 3,
             },
-            report["arms"]["full-agentic"]["execution"]["model_role_calls"],
+            report["arms"]["routed-specialists-audited"]["execution"]["model_role_calls"],
         )
 
 

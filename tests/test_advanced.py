@@ -114,11 +114,17 @@ class AdvancedFeatureTests(unittest.TestCase):
             "improved: Review the diff and return JSON with severity, fix and test.",
             regression_score=0.0,
         )
-        self.assertEqual("activated", result["decision"])
+        self.assertEqual("awaiting_approval", result["decision"])
         self.assertGreater(result["candidate"]["score"], result["baseline"]["score"])
-        self.assertTrue(result["version"]["active"])
+        self.assertFalse(result["version"]["active"])
+        self.assertIsNone(store.get_active_skill_version("llm-review"))
         self.assertTrue(
             store.list_evolution_runs()[0]["metrics"]["external_regression_score_ignored"]
+        )
+        self.assertTrue(engine.approve("llm-review", result["version"]["version"]))
+        self.assertEqual(
+            result["version"]["version"],
+            store.get_active_skill_version("llm-review")["version"],
         )
         rejected = engine.propose(
             "llm-review",

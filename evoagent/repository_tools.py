@@ -305,7 +305,7 @@ class RepositoryToolSuite:
                 "available": False, "kind": kind,
                 "reason": "no administrator-configured test command",
             })
-        with tempfile.TemporaryDirectory(prefix="evoagent-review-check-") as temp:
+        with tempfile.TemporaryDirectory(prefix="tracereview-review-check-") as temp:
             checkout = os.path.join(temp, "checkout")
             shutil.copytree(
                 self.root, checkout,

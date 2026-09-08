@@ -11,8 +11,13 @@ from evoagent.evolution_proof import (
 
 class PromptEvolutionProofTests(unittest.TestCase):
     def test_feedback_evolution_improves_repository_disjoint_holdout(self):
-        cases = generate_prompt_evolution_cases()
-        self.assertEqual(100, len(cases))
+        source = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "evaluation_data", "prompt_evolution_130.jsonl"
+        ))
+        if not os.path.exists(source):
+            self.skipTest("optional prompt_evolution_130.jsonl was not supplied")
+        cases = generate_prompt_evolution_cases(source)
+        self.assertEqual(130, len(cases))
         validation_repositories = {
             case["repository"] for case in cases if case["split"] == "validation"
         }
@@ -29,17 +34,18 @@ class PromptEvolutionProofTests(unittest.TestCase):
             write_jsonl(cases, dataset_path)
             report = run_prompt_evolution_proof(dataset_path, database_path)
 
-        self.assertEqual("activated", report["evolution_run"]["decision"])
-        self.assertEqual(10, report["feedback"]["missed_findings"])
+        self.assertEqual("awaiting_approval", report["evolution_run"]["decision"])
+        self.assertEqual(32, report["feedback"]["missed_findings"])
         self.assertGreater(
             report["validation"]["candidate"]["f1"],
             report["validation"]["baseline"]["f1"],
         )
-        self.assertGreaterEqual(
+        self.assertGreater(
             report["holdout"]["candidate"]["f1"],
             report["holdout"]["baseline"]["f1"],
         )
         self.assertTrue(report["release_gate"]["quantitative_passed"])
+        self.assertTrue(report["release_gate"]["human_approval_required"])
         self.assertFalse(report["release_gate"]["production_activation_allowed"])
 
 

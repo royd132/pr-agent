@@ -1,4 +1,4 @@
-"""Checkpointed review workflow powered by the DiffPrism compatibility runtime."""
+"""Checkpointed PR review workflow powered by TraceReview's AgentRuntime."""
 import threading
 from typing import Any, Dict, Optional, TypedDict
 
@@ -47,7 +47,7 @@ class ReviewHarness:
         self.timeout_seconds = timeout_seconds
         self.node_retries = node_retries
         self.observability = observability
-        self.name = "evoagent-runtime"
+        self.name = "tracereview-runtime"
         self._ctx = threading.local()
         self.runtime = AgentRuntime(max_steps, timeout_seconds, node_retries)
 
@@ -153,22 +153,18 @@ class ReviewHarness:
             run_mode = dict(reviewer_summary.get("run_mode") or {})
             components = list(reviewer_summary.get("components") or [])
             execution = dict(reviewer_summary.get("execution") or {})
-            change_map = dict(reviewer_summary.get("change_map") or {})
-            verdict = dict(reviewer_summary.get("verdict") or {})
             execution["gates"] = reviewer_summary.get("gates") or {}
             execution["rejected_findings"] = reviewer_summary.get("rejected_findings") or []
             execution["repository_context"] = reviewer_summary.get("repository_context") or {}
         else:
             collaboration = reviewer_summary or self._persisted_collaboration_summary(state["task_id"])
             run_mode, components, execution = {}, [], {}
-            change_map, verdict = {}, {}
         report = ReviewReport(
             repository=state["repository"], pull_request=state.get("pull_request"),
             summary=self._summary(findings, len(parsed.files), risk), risk=risk,
             findings=findings, files_reviewed=parsed.files, reviewer=self.reviewer.name,
             collaboration=collaboration,
             run_mode=run_mode, components=components, execution=execution,
-            change_map=change_map, verdict=verdict,
         )
         return {"report": report.to_dict()}
 
@@ -228,8 +224,6 @@ class ReviewHarness:
             run_mode=dict(value.get("run_mode", {})),
             components=list(value.get("components", [])),
             execution=dict(value.get("execution", {})),
-            change_map=dict(value.get("change_map", {})),
-            verdict=dict(value.get("verdict", {})),
         )
 
     @staticmethod

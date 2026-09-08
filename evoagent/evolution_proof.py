@@ -1,7 +1,7 @@
 """Auditable offline proof for feedback-driven prompt evolution.
 
 This module deliberately uses a deterministic prompt-policy reviewer.  It proves
-that DiffPrism's feedback -> prompt version -> replay -> holdout -> activation
+that TraceReview's feedback -> candidate policy -> replay -> holdout -> human approval
 loop changes agent behavior under controlled conditions. It does not claim that
 an unconfigured external LLM improved, and reports produced here are marked as
 offline fixtures.
@@ -27,12 +27,12 @@ FOCUS_RULE = re.compile(r"\[focus-rule:([A-Z][A-Z0-9_-]{1,79})\]")
 
 DEFAULT_PROMPT_DATASET = os.path.abspath(os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
-    "evaluation_data", "pr_diff_100.jsonl",
+    "evaluation_data", "prompt_evolution_130.jsonl",
 ))
 
 
 def load_prompt_evolution_cases(dataset_path: str = DEFAULT_PROMPT_DATASET) -> List[dict]:
-    """Load the checked-in 100-case synthetic prompt replay corpus."""
+    """Load the checked-in 130-case prompt replay corpus."""
     return load_jsonl(dataset_path)
 
 
@@ -177,14 +177,19 @@ def run_prompt_evolution_proof(dataset_path: str, database_path: str) -> Dict[st
     active = store.get_active_skill_version("llm-review")
     versions = list(reversed(store.list_skill_versions("llm-review")))
     runs = store.list_evolution_runs()
-    candidate_prompt = active["prompt"] if active else DEFAULT_PROMPT
+    candidate_version = next(
+        (item for item in versions if int(item.get("version", 0)) == int((result.get("version") or {}).get("version", 0))),
+        None,
+    )
+    candidate_prompt = candidate_version["prompt"] if candidate_version else (active["prompt"] if active else DEFAULT_PROMPT)
 
     all_cases = store.list_evaluation_cases(None, True, len(cases))
     evaluator = RegressionEvaluator(PromptPolicyReviewer)
     baseline_all = evaluator.run(DEFAULT_PROMPT, all_cases)
     candidate_all = evaluator.run(candidate_prompt, all_cases)
     provenance_passed = source_kinds == ["public-github-pr"]
-    quantitative_passed = result.get("decision") == "activated"
+    quantitative_passed = result.get("decision") in {"awaiting_approval", "activated"}
+    human_approval_required = result.get("decision") == "awaiting_approval"
     return {
         "schema_version": 1,
         "generated_at": utc_now(),
@@ -255,7 +260,10 @@ def run_prompt_evolution_proof(dataset_path: str, database_path: str) -> Dict[st
         "release_gate": {
             "quantitative_passed": quantitative_passed,
             "production_data_provenance_passed": provenance_passed,
-            "production_activation_allowed": quantitative_passed and provenance_passed,
+            "human_approval_required": human_approval_required,
+            "production_activation_allowed": (
+                quantitative_passed and provenance_passed and not human_approval_required
+            ),
         },
     }
 
@@ -271,7 +279,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
         )
 
     lines = [
-        "# DiffPrism 提示词版本进化回放证明",
+        "# TraceReview Review Policy 回放证明",
         "",
         "## 结论",
         "",
@@ -281,6 +289,9 @@ def render_markdown(report: Dict[str, Any]) -> str:
         ),
         "- 生产来源门禁：`%s`" % (
             "PASS" if report["release_gate"]["production_data_provenance_passed"] else "FAIL"
+        ),
+        "- 人工审批：`%s`" % (
+            "REQUIRED" if report["release_gate"].get("human_approval_required") else "NOT_REQUIRED"
         ),
         "- 生产激活：`%s`" % (
             "ALLOWED" if report["release_gate"]["production_activation_allowed"] else "BLOCKED"

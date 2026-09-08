@@ -21,10 +21,10 @@ def main() -> None:
     )
     parser.add_argument("--real-dataset", default="")
     parser.add_argument("--minimum-real-cases", type=int, default=300)
-    parser.add_argument("--base-url", default=os.getenv("EVOAGENT_LLM_BASE_URL", ""))
-    parser.add_argument("--api-key", default=os.getenv("EVOAGENT_LLM_API_KEY", ""))
-    parser.add_argument("--model", default=os.getenv("EVOAGENT_LLM_MODEL", ""))
-    parser.add_argument("--provider", default=os.getenv("EVOAGENT_LLM_PROVIDER", "custom"))
+    parser.add_argument("--base-url", default=os.getenv("TRACEREVIEW_LLM_BASE_URL", os.getenv("EVOAGENT_LLM_BASE_URL", "")))
+    parser.add_argument("--api-key", default=os.getenv("TRACEREVIEW_LLM_API_KEY", os.getenv("EVOAGENT_LLM_API_KEY", "")))
+    parser.add_argument("--model", default=os.getenv("TRACEREVIEW_LLM_MODEL", os.getenv("EVOAGENT_LLM_MODEL", "")))
+    parser.add_argument("--provider", default=os.getenv("TRACEREVIEW_LLM_PROVIDER", os.getenv("EVOAGENT_LLM_PROVIDER", "custom")))
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--token-budget", type=int, default=12000)
     parser.add_argument("--time-budget", type=int, default=240)
@@ -47,7 +47,7 @@ def main() -> None:
             provider=args.provider, timeout=args.timeout,
         )
         real_reviewer = ProductArmReviewer(
-            "full-agentic", client, args.token_budget, args.time_budget,
+            "routed-specialists-audited", client, args.token_budget, args.time_budget,
         )
         real_cases = load_jsonl(args.real_dataset)
 

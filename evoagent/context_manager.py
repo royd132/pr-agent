@@ -318,7 +318,18 @@ class ContextManager:
                 managed["task"], max(192, hard_input_limit - tools_tokens - 320)
             )
         if estimate_tokens(managed) > hard_input_limit:
+            managed["available_tools"] = self._compact_tool_catalog(managed["available_tools"])
+        # If the complete schema catalog still does not fit, retain names, required
+        # parameters and operational metadata. ToolRegistry performs the actual
+        # argument validation, so this is a safe context-pressure fallback rather
+        # than a relaxation of the execution contract.
+        if estimate_tokens(managed) > hard_input_limit:
+            managed["available_tools"] = self._minimal_tool_catalog(managed["available_tools"])
+        if estimate_tokens(managed) > hard_input_limit:
             managed["context_policy"] = {"input_token_limit": hard_input_limit}
+        while estimate_tokens(managed) > hard_input_limit and managed.get("observations"):
+            managed["observations"].pop(0)
+            observation_stats["dropped"] += 1
         stats = {
             "estimated_input_tokens_before": original_tokens,
             "estimated_input_tokens_after": estimate_tokens(managed),
@@ -326,6 +337,47 @@ class ContextManager:
             "observations": observation_stats,
         }
         return managed, stats
+
+    @staticmethod
+    def _compact_tool_catalog(tools: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        compact = []
+        for item in tools:
+            schema = dict(item.get("parameters") or {})
+            properties = {}
+            for name, spec in dict(schema.get("properties") or {}).items():
+                value = {"type": (spec or {}).get("type", "string")}
+                for key in ("minimum", "maximum", "enum"):
+                    if key in (spec or {}):
+                        value[key] = spec[key]
+                properties[name] = value
+            compact.append({
+                "name": item.get("name"),
+                "description": _clip(str(item.get("description", "")), 96),
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": list(schema.get("required") or []),
+                    "additionalProperties": False,
+                },
+                "side_effect": bool(item.get("side_effect", False)),
+                "retryable": bool(item.get("retryable", True)),
+                "timeout_seconds": item.get("timeout_seconds"),
+            })
+        return compact
+
+    @staticmethod
+    def _minimal_tool_catalog(tools: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        values = []
+        for item in tools:
+            schema = dict(item.get("parameters") or {})
+            values.append({
+                "name": item.get("name"),
+                "required": list(schema.get("required") or []),
+                "argument_names": sorted(dict(schema.get("properties") or {})),
+                "side_effect": bool(item.get("side_effect", False)),
+                "retryable": bool(item.get("retryable", True)),
+            })
+        return values
 
     def output_token_limit(self, system_prompt: str, requested: int) -> int:
         """Reserve enough of the configured window for a minimally useful input."""
@@ -434,7 +486,7 @@ class ContextManager:
         domain_hits = [domain for domain in domains if domain and domain in lowered]
         score += len(domain_hits) * 15
         path_lower = normalized_path
-        if any(part in path_lower for part in ("auth", "scope-mapper", "permission", "payment", "migration")):
+        if any(part in path_lower for part in ("auth", "security", "permission", "payment", "migration")):
             score += 10
         symbols = list(dict.fromkeys(SYMBOL.findall(hunk.content)))[:20]
         changed = [
@@ -613,7 +665,7 @@ class ContextManager:
                         result[key] = reduce(child, depth + 1)
                 return result
             if isinstance(item, list):
-                # Preserve list cardinality and indices used by Lead/Critic.
+                # Preserve list cardinality and indices used by Coordinator/Evidence Auditor.
                 return [reduce(child, depth + 1) for child in item]
             if isinstance(item, str):
                 return _clip(item, 600 if depth < 3 else 300)
@@ -688,7 +740,7 @@ class ContextManager:
                         }
                     elif isinstance(child, list) and key in {
                         "candidate_findings", "candidates", "scanner_findings",
-                        "worker_results", "examiner_decisions", "assignments",
+                        "specialist_results", "audit_decisions", "assignments",
                     }:
                         result[key] = [
                             {
@@ -714,10 +766,10 @@ class ContextManager:
             return rendered
 
         # Last-resort manifest keeps phase and every candidate index/location,
-        # which are the fields needed by Lead and Critic final protocols.
+        # which are the fields needed by Coordinator and Evidence Auditor final protocols.
         manifest: Dict[str, Any] = {
             "phase": value.get("phase"),
-            "lead_assignment": compact_item(value.get("lead_assignment", {})),
+            "coordinator_assignment": compact_item(value.get("coordinator_assignment", {})),
             "instruction": _clip(str(value.get("instruction", "")), 160),
             "context_compacted": True,
         }
@@ -735,7 +787,7 @@ class ContextManager:
                     if isinstance(item, dict)
                 ],
             }
-        for key in ("candidate_findings", "candidates", "examiner_decisions"):
+        for key in ("candidate_findings", "candidates", "audit_decisions"):
             if isinstance(value.get(key), list):
                 manifest[key] = [
                     {

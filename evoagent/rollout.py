@@ -1,4 +1,4 @@
-"""Deterministic canary and shadow assignment with automatic rollback."""
+"""Deterministic canary/shadow observation with fail-safe rollback and human promotion."""
 import hashlib
 from typing import Dict, Optional
 
@@ -57,9 +57,19 @@ class ReleaseManager:
             tenant_id, skill_name, task_id, lane, primary, candidate,
             disagreement, candidate_failed,
         )
-        if result and result["status"] == "promoted":
+        if result and result["status"] == "awaiting_approval":
             self.store.create_alert(
-                tenant_id, "rollout-promoted:%s" % skill_name, "info",
-                "Candidate %s was automatically promoted after shadow verification." % skill_name,
+                tenant_id, "rollout-ready:%s" % skill_name, "info",
+                "Candidate %s passed shadow observation and is awaiting explicit approval." % skill_name,
+            )
+        return result
+
+    def approve(self, tenant_id: str, skill_name: str) -> Optional[dict]:
+        """Promote a shadow-validated candidate only after an explicit human action."""
+        result = self.store.approve_deployment(tenant_id, skill_name)
+        if result:
+            self.store.create_alert(
+                tenant_id, "rollout-approved:%s" % skill_name, "info",
+                "Candidate %s was explicitly approved for the stable lane." % skill_name,
             )
         return result

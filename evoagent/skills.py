@@ -2,7 +2,7 @@
 
 Skills are prompt-time capabilities, not executable Python reviewers. Discovery
 loads only name/description metadata; bodies and resources are exposed after a
-Lead selects a skill for a worker.
+Coordinator selects a skill for a specialist.
 """
 import hashlib
 import os

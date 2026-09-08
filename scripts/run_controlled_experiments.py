@@ -29,7 +29,7 @@ def render_summary(report):
         return "%.2f%%" % (100.0 * float(value))
 
     lines = [
-        "# EvoAgent 100 条受控集实验结果", "",
+        "# TraceReview 100 条受控集实验结果", "",
         "> 执行模式：`controlled-offline-no-llm`。本报告没有调用大模型，",
         "> 只验证确定性规则、Agent 编排计数和 Skill 选择门禁。", "",
         "## 数据", "",
@@ -52,8 +52,8 @@ def render_summary(report):
         "|---|---:|---:|---:|---:|---:|---:|---:|",
     ])
     for name in (
-        "single-llm", "single-llm-scanner", "multi-llm-no-critic",
-        "full-agentic", "full-agentic-evolved-skill",
+        "model-baseline", "model-plus-scanner", "routed-specialists",
+        "routed-specialists-audited", "routed-specialists-policy",
     ):
         metrics = report["experiment_two"]["arms"][name]["metrics"]
         lines.append(
@@ -68,10 +68,10 @@ def render_summary(report):
         "scanner_vs_single"
     ]["f1"]["delta"]
     lines.extend([
-        "", "隐藏 Holdout 上，Critic、多 Agent 和 Evolved Skill 相对对应基线的 F1 差值均为 0；",
+        "", "隐藏 Holdout 上，Evidence Auditor、多 Specialist 和 Review Policy 相对对应基线的 F1 差值均为 0；",
         "Scanner 相对单规则基线的 Holdout F1 变化为 %+.2f 个百分点。"
         % (100.0 * scanner_delta), "",
-        "## 实验三：Skill 自进化", "",
+        "## 实验三：Skill / Review Policy 离线候选优化", "",
         "| 实验臂 | Precision | Recall | F1 | 高风险召回 | Clean accuracy |",
         "|---|---:|---:|---:|---:|---:|",
     ])
@@ -88,7 +88,7 @@ def render_summary(report):
         "", "- 第 1 轮学习规则：`%s`" % "`, `".join(learned),
         "- Validation 候选：`rejected`（没有达到 F1 最小提升）",
         "- Holdout 激活门禁：`blocked`",
-        "- 结论：在该仓库隔离切分上，Skill 自进化没有得到准确率提升证据。", "",
+        "- 结论：在该仓库隔离切分上，当前离线候选优化没有得到准确率提升证据，因此不具备自动上线依据。", "",
     ])
     return "\n".join(lines)
 

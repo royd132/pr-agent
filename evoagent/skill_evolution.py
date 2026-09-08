@@ -1,4 +1,4 @@
-"""Replay-gated evolution of standard Agent Skill ``SKILL.md`` packages."""
+"""Feedback-driven optimization of standard Agent Skill ``SKILL.md`` packages."""
 import hashlib
 import json
 import re
@@ -102,13 +102,13 @@ class _ReplayTaskStore:
     def get(self, _task_id: str, _tenant_id: Optional[str] = None) -> dict:
         return {"input": {
             "mode": "agentic",
-            "enabled_agents": ["prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner"],
+            "enabled_agents": ["coordinator", "boundary-inspector", "behavior-inspector", "evidence-auditor"],
             "enabled_skills": [self.skill_name],
         }}
 
 
 class AgentSkillReplayReviewer(Reviewer):
-    """Replay a candidate through the product Lead/worker Skill runtime."""
+    """Replay a candidate through the product Coordinator/specialist Skill runtime."""
 
     def __init__(self, artifact: dict, client, token_budget: int = 8000, time_budget_seconds: int = 60):
         from .agentic_core import AgenticReviewer
@@ -150,7 +150,7 @@ class AgentSkillReplayReviewer(Reviewer):
     def evaluation_config(self) -> dict:
         return {
             "mode": "agentic", "roles": [
-                "prism-lead", "scope-mapper", "failure-hunter", "evidence-examiner",
+                "coordinator", "boundary-inspector", "behavior-inspector", "evidence-auditor",
             ],
             "skill": self.skill.name,
             "per_role_token_budget": self.token_budget,
@@ -268,13 +268,21 @@ class SkillEvolutionEngine:
             and len(validation) >= self.min_cases and len(holdout) >= self.min_holdout_cases,
         }
 
-    def propose(self, skill_name: str, artifact: Any, tenant_id: str = "default") -> dict:
+    def propose(
+        self, skill_name: str, artifact: Any, tenant_id: str = "default",
+        feedback_case_ids: Optional[list] = None,
+    ) -> dict:
         skill_name = skill_name.strip().lower()
         candidate = validate_artifact(artifact, skill_name)
         with self._lock:
-            return self._propose(skill_name, candidate, tenant_id)
+            return self._propose(
+                skill_name, candidate, tenant_id, feedback_case_ids=feedback_case_ids
+            )
 
-    def _propose(self, skill_name: str, artifact: dict, tenant_id: str) -> dict:
+    def _propose(
+        self, skill_name: str, artifact: dict, tenant_id: str,
+        feedback_case_ids: Optional[list] = None,
+    ) -> dict:
         active = self.store.get_active_skill_artifact(skill_name, tenant_id)
         baseline_artifact = (
             validate_artifact(active["artifact"], skill_name)
@@ -327,8 +335,11 @@ class SkillEvolutionEngine:
                 "holdout_non_regression": holdout_safe,
             })
             if no_errors and improved and validation_safe and holdout_safe:
-                decision = "activated"
-                reason = "candidate SKILL.md improved validation and passed holdout non-regression"
+                decision = "awaiting_approval"
+                reason = (
+                    "candidate SKILL.md improved validation and passed holdout non-regression; "
+                    "explicit human activation is required"
+                )
             else:
                 decision = "rejected"
                 failures = []
@@ -357,6 +368,7 @@ class SkillEvolutionEngine:
                 "candidate_holdout": self._redact_holdout(candidate_holdout),
                 "baseline_holdout": self._redact_holdout(baseline_holdout),
                 "gates": gates, "reason": reason, "candidate_change": candidate_change,
+                "pending_failure_case_ids": sorted({int(item) for item in (feedback_case_ids or [])}),
                 "reproducibility": {
                     "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
                     "candidate_artifact_sha256": version["artifact_sha256"],
@@ -424,14 +436,14 @@ class SkillEvolutionEngine:
             "name": skill_name,
             "files": {**artifact["files"], "SKILL.md": content},
         }, skill_name)
-        result = self.propose(skill_name, candidate, tenant_id)
+        result = self.propose(
+            skill_name, candidate, tenant_id, feedback_case_ids=used_ids
+        )
         result.update({
             "failure_cases_used": len(used_ids),
             "learned_rule_ids": sorted(set(learned)),
             "removed_rule_ids": sorted(set(removed)),
         })
-        if result["decision"] == "activated":
-            self.store.resolve_failure_cases(used_ids)
         return result
 
     @staticmethod
@@ -470,8 +482,27 @@ class SkillEvolutionEngine:
             return ""
         return ""
 
+    def approve(self, skill_name: str, version: int, tenant_id: str = "default") -> bool:
+        """Explicitly activate a replay-gated candidate and close its feedback loop."""
+        activated = self.store.activate_skill_artifact(skill_name, version, tenant_id)
+        if not activated:
+            return False
+        pending = []
+        for run in self.store.list_skill_evolution_runs(200, tenant_id):
+            if (
+                run.get("skill_name") == skill_name
+                and int(run.get("candidate_version") or 0) == int(version)
+            ):
+                pending.extend((run.get("metrics") or {}).get("pending_failure_case_ids") or [])
+                break
+        if pending:
+            self.store.resolve_failure_cases(sorted({int(item) for item in pending}))
+        return True
+
     def rollback(self, skill_name: str, version: int, tenant_id: str = "default") -> bool:
-        return self.store.activate_skill_artifact(skill_name, version, tenant_id)
+        # Backward-compatible name retained for existing API clients. Activating an
+        # older version and approving a pending candidate are the same store action.
+        return self.approve(skill_name, version, tenant_id)
 
     @staticmethod
     def _skill_diff(baseline: dict, candidate: dict) -> dict:

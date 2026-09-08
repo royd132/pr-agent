@@ -1,4 +1,4 @@
-"""DiffPrism's dependency-free durable workflow runtime and tool registry.
+"""TraceReview's dependency-free durable workflow runtime and tool registry.
 
 The runtime deliberately separates orchestration from agent behaviour:
 
@@ -32,11 +32,19 @@ class AgentTool:
     description: str
     parameters: Dict[str, Any]
     handler: Callable[..., Any]
+    # Tool contract metadata is surfaced to the model/runtime so operational
+    # policy can distinguish read-only evidence tools from side effects.
+    side_effect: bool = False
+    retryable: bool = True
+    timeout_seconds: Optional[int] = None
 
     def catalog_entry(self) -> Dict[str, Any]:
         return {
             "name": self.name, "description": self.description,
             "parameters": self.parameters,
+            "side_effect": self.side_effect,
+            "retryable": self.retryable,
+            "timeout_seconds": self.timeout_seconds,
         }
 
 

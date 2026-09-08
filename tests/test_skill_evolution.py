@@ -52,26 +52,26 @@ class SkillAwareClient:
             }, 1)
         managed = json.loads(user)
         task = json.loads(managed["task"])
-        if role == "prism-lead":
+        if role == "coordinator":
             if task["phase"] == "delegate":
                 requested = task.get("requested_agent_skills") or []
                 selected = requested or [
                     item["name"] for item in task.get("available_agent_skills") or []
                 ]
                 return {"action": "final", "delegations": [{
-                    "assignment_id": "security-1", "worker": "scope-mapper",
+                    "assignment_id": "security-1", "worker": "boundary-inspector",
                     "objective": "Review project-specific dangerous calls",
                     "skills": selected,
                 }], "risk_level": "normal"}
-            if task["phase"] == "assess-workers":
-                return {"action": "final", "revision_requests": [], "examiner_objective": "Verify"}
+            if task["phase"] == "assess-specialists":
+                return {"action": "final", "revision_requests": [], "audit_objective": "Verify"}
             if task["phase"] == "finalize":
                 return {
                     "action": "final",
                     "accepted_finding_indices": list(range(len(task["candidate_findings"]))),
                     "confidence_adjustments": [],
                 }
-        if role == "scope-mapper":
+        if role == "boundary-inspector":
             instructions = "\n".join(
                 item.get("instructions", "") for item in task.get("active_agent_skills") or []
             )
@@ -86,13 +86,12 @@ class SkillAwareClient:
                     "call_chain": [{"path": "a.py", "line": 1, "symbol": "dangerous_call"}],
                 }]}
             return {"action": "final", "findings": []}
-        if role == "failure-hunter":
+        if role == "behavior-inspector":
             return {"action": "final", "findings": []}
-        if role == "evidence-examiner":
+        if role == "evidence-auditor":
             return {"action": "final", "decisions": [{
-                "finding_index": index, "decision": "verified",
-                "reason": "Candidate evidence is sufficient.",
-                "confidence_adjustment": 0.0, "supporting_evidence_ids": [],
+                "finding_index": index, "accepted": True, "objections": [],
+                "confidence_adjustment": 0.0,
             } for index, _item in enumerate(task["candidates"])]}
         raise AssertionError(role)
 
@@ -171,17 +170,21 @@ class SkillEvolutionTests(unittest.TestCase):
         summary = reviewer.agentic.collaboration_summary("skill-replay:review-dangerous-calls:1")
         self.assertEqual(["review-dangerous-calls"], summary["collaboration"]["agent_skills"])
 
-    def test_candidate_skill_md_replay_activates_and_persists(self):
+    def test_candidate_skill_md_replay_requires_approval_and_persists(self):
         self.seed_cases()
         result = self.engine().propose("review-dangerous-calls", artifact())
-        self.assertEqual("activated", result["decision"])
+        self.assertEqual("awaiting_approval", result["decision"])
+        self.assertIsNone(self.store.get_active_skill_artifact("review-dangerous-calls"))
+        self.assertTrue(self.engine().approve(
+            "review-dangerous-calls", result["version"]["version"]
+        ))
         active = self.store.get_active_skill_artifact("review-dangerous-calls")
         self.assertEqual("agent-skill", active["artifact"]["format"])
         self.assertIn("SKILL.md", active["artifact"]["files"])
         self.assertEqual(2, active["artifact"]["schema_version"])
         self.assertEqual(["SKILL.md"], result["candidate_change"]["changed_files"])
 
-    def test_auto_evolution_writes_learned_guidance_into_skill_md(self):
+    def test_auto_evolution_waits_for_approval_then_resolves_feedback(self):
         self.seed_cases()
         self.store.create("task", "org/repo", 1, {"source": "test"})
         self.store.save_task_payload("task", RISK_DIFF)
@@ -189,7 +192,11 @@ class SkillEvolutionTests(unittest.TestCase):
             "rule_id": "SEC-DANGEROUS-CALL", "severity": "high", "path": "a.py", "line": 1,
         }})
         result = self.engine().auto_propose("review-dangerous-calls")
-        self.assertEqual("activated", result["decision"])
+        self.assertEqual("awaiting_approval", result["decision"])
+        self.assertFalse(self.store.list_failure_cases()[0]["resolved"])
+        self.assertTrue(self.engine().approve(
+            "review-dangerous-calls", result["version"]["version"]
+        ))
         content = self.store.get_active_skill_artifact(
             "review-dangerous-calls"
         )["artifact"]["files"]["SKILL.md"]

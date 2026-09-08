@@ -119,6 +119,27 @@ class ProductionFeatureTests(unittest.TestCase):
         self.assertEqual("rolled_back", result["status"])
         self.assertTrue(self.store.list_alerts("tenant"))
 
+
+    def test_shadow_observation_requires_human_promotion(self):
+        release = ReleaseManager(self.store)
+        release.configure("tenant", "skill", {
+            "stable_version": 1, "candidate_version": 2,
+            "canary_percent": 0, "shadow_percent": 100,
+            "min_samples": 1, "max_error_rate": .25,
+            "max_disagreement_rate": .5, "auto_promote": True,
+        })
+        observed = release.observe_shadow(
+            "tenant", "skill", "task-1", "stable",
+            {"finding_keys": ["a"]}, {"finding_keys": ["a"]}, False,
+        )
+        self.assertEqual("awaiting_approval", observed["status"])
+        pending = self.store.get_deployment("tenant", "skill")
+        self.assertEqual(1, pending["stable_version"])
+
+        approved = release.approve("tenant", "skill")
+        self.assertEqual("promoted", approved["status"])
+        self.assertEqual(2, approved["stable_version"])
+
     def test_repair_verifier_blocks_invalid_python(self):
         result = RepairVerifier().verify_contents({"app.py": "def broken(:\n"})
         self.assertFalse(result["passed"])

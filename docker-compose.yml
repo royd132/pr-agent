@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: diffprism
-      POSTGRES_USER: diffprism
-      POSTGRES_PASSWORD: ${DIFFPRISM_POSTGRES_PASSWORD:?set DIFFPRISM_POSTGRES_PASSWORD}
+      POSTGRES_DB: tracereview
+      POSTGRES_USER: tracereview
+      POSTGRES_PASSWORD: tracereview-local
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U diffprism"]
+      test: ["CMD-SHELL", "pg_isready -U tracereview"]
       interval: 5s
       timeout: 3s
       retries: 15
@@ -24,20 +24,20 @@ services:
       timeout: 3s
       retries: 15
 
-  diffprism:
+  tracereview:
     build: .
     ports:
       - "8080:8080"
     environment:
-      DIFFPRISM_HOST: 0.0.0.0
-      DIFFPRISM_DATABASE_URL: postgresql://diffprism:${DIFFPRISM_POSTGRES_PASSWORD}@postgres:5432/diffprism
-      DIFFPRISM_REDIS_URL: redis://redis:6379/0
-      DIFFPRISM_ASYNC_WORKERS: 4
-      DIFFPRISM_SKILLS_DIR: /app/skills
-      DIFFPRISM_AUTH_REQUIRED: "true"
-      DIFFPRISM_AUTH_SECRET: ${DIFFPRISM_AUTH_SECRET:?set DIFFPRISM_AUTH_SECRET}
-      DIFFPRISM_BOOTSTRAP_ADMIN_USERNAME: ${DIFFPRISM_BOOTSTRAP_ADMIN_USERNAME:-admin}
-      DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD: ${DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD:?set DIFFPRISM_BOOTSTRAP_ADMIN_PASSWORD}
+      TRACEREVIEW_HOST: 0.0.0.0
+      TRACEREVIEW_DATABASE_URL: postgresql://tracereview:tracereview-local@postgres:5432/tracereview
+      TRACEREVIEW_REDIS_URL: redis://redis:6379/0
+      TRACEREVIEW_ASYNC_WORKERS: 4
+      TRACEREVIEW_SKILLS_DIR: /app/skills
+      TRACEREVIEW_AUTH_REQUIRED: "true"
+      TRACEREVIEW_AUTH_SECRET: ${TRACEREVIEW_AUTH_SECRET:-local-only-change-this-secret-123456}
+      TRACEREVIEW_BOOTSTRAP_ADMIN_USERNAME: ${TRACEREVIEW_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      TRACEREVIEW_BOOTSTRAP_ADMIN_PASSWORD: ${TRACEREVIEW_BOOTSTRAP_ADMIN_PASSWORD:-tracereview-local-admin}
     env_file:
       - path: .env
         required: false

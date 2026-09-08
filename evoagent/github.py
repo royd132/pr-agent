@@ -11,8 +11,6 @@ import time
 from datetime import datetime, timezone
 from typing import Dict
 
-from .presentation import GITHUB_USER_AGENT
-
 
 def verify_signature(secret: str, body: bytes, signature: str) -> bool:
     if not secret or not signature.startswith("sha256="):
@@ -28,7 +26,7 @@ class GitHubClient:
         self.max_attempts = max_attempts
 
     def _headers(self, accept: str = "application/vnd.github+json") -> Dict[str, str]:
-        headers = {"Accept": accept, "User-Agent": GITHUB_USER_AGENT, "X-GitHub-Api-Version": "2022-11-28"}
+        headers = {"Accept": accept, "User-Agent": "TraceReview/2.0", "X-GitHub-Api-Version": "2022-11-28"}
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
         return headers
@@ -50,13 +48,16 @@ class GitHubClient:
         with urllib.request.urlopen(request, timeout=self.timeout):
             return None
 
-    def upsert_comment(self, api_url: str, markdown: str, marker: str) -> None:
-        """Update this service's existing review comment instead of creating duplicates."""
+    def upsert_comment(
+        self, api_url: str, markdown: str, marker: str, legacy_markers=(),
+    ) -> None:
+        """Update this service's review comment, including legacy-brand markers."""
         comments_url = api_url.rstrip("/") + "/comments"
         comments = self._json("GET", comments_url + "?per_page=100")
         body = marker + "\n" + markdown
+        markers = (marker,) + tuple(legacy_markers or ())
         for comment in comments:
-            if marker in str(comment.get("body", "")):
+            if any(value in str(comment.get("body", "")) for value in markers):
                 self._json("PATCH", comment["url"], {"body": body})
                 return
         self._json("POST", comments_url, {"body": body})
@@ -203,7 +204,7 @@ class GitHubAppAuthenticator:
             "https://api.github.com/app/installations/%d/access_tokens" % installation_id,
             data=b"{}", method="POST",
             headers={"Authorization": "Bearer " + self.app_jwt(), "Accept": "application/vnd.github+json",
-                     "X-GitHub-Api-Version": "2022-11-28", "User-Agent": GITHUB_USER_AGENT,
+                     "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "TraceReview/2.0",
                      "Content-Type": "application/json"},
         )
         with urllib.request.urlopen(request, timeout=30) as response:

@@ -61,8 +61,8 @@ def public_taxonomy() -> Dict[str, Any]:
         },
         "run_modes": {
             RunMode.AGENTIC.value: (
-                "Prism Lead delegates change mapping and failure discovery, Evidence Examiner "
-                "verifies candidates once, and Prism Lead publishes the merge verdict."
+                "A Review Coordinator delegates to Boundary and Behavior Inspectors, a blind "
+                "Evidence Auditor verifies when needed, and the Coordinator performs final synthesis."
             ),
         },
     }

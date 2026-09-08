@@ -1,4 +1,4 @@
-"""Tenant-aware working, episodic and semantic memory for review agents."""
+"""Tenant-aware task context, review history and repository feedback memory."""
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -9,7 +9,7 @@ from .store import utc_now
 
 
 TOKEN = re.compile(r"[A-Za-z0-9_./:-]{2,}")
-VALID_SCOPES = {"working", "episodic", "semantic", "procedural"}
+VALID_SCOPES = {"working", "episodic", "semantic", "procedural"}  # procedural kept for legacy records
 
 
 def _tokens(value: str) -> set:
@@ -52,10 +52,18 @@ class MemoryManager:
             expires_at = (
                 datetime.now(timezone.utc) + timedelta(seconds=max(1, int(ttl)))
             ).isoformat()
+        operational_scope = {
+            "working": "task-context",
+            "episodic": "review-history",
+            "semantic": "repository-feedback",
+            "procedural": "legacy-procedural",
+        }.get(scope, scope)
+        metadata.setdefault("operational_scope", operational_scope)
         record = {
             "id": memory_id, "tenant_id": tenant_id or "default",
             "repository": repository, "task_id": task_id, "agent": agent,
-            "scope": scope, "kind": kind, "content": normalized,
+            "scope": scope, "operational_scope": operational_scope,
+            "kind": kind, "content": normalized,
             "keywords": sorted(_tokens(normalized) | _tokens(kind)),
             "metadata": metadata, "importance": importance,
             "created_at": utc_now(), "expires_at": expires_at,
@@ -183,8 +191,8 @@ class MemoryManager:
             finding.get("line", 0), note,
         )
         return self.remember(
-            tenant_id, repository, "semantic", "review_feedback", content,
-            {"category": category, "finding": finding}, task_id=task_id,
+            tenant_id, repository, "semantic", "repository_feedback", content,
+            {"category": category, "finding": finding, "scope_label": "repository-feedback"}, task_id=task_id,
             importance=0.95 if category in {"false_positive", "missed_issue", "bad_fix"} else 0.7,
         )
 

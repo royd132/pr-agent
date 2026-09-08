@@ -8,16 +8,18 @@ from typing import Any, Dict, Optional
 from .models import ReviewReport, TaskState, TraceEvent
 
 
-class _ClosingConnection(sqlite3.Connection):
-    def __exit__(self, exc_type, exc_value, traceback):
-        try:
-            return super().__exit__(exc_type, exc_value, traceback)
-        finally:
-            self.close()
-
-
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+class _ClosingSQLiteConnection(sqlite3.Connection):
+    """sqlite3 context manager that also releases the file descriptor."""
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
 
 
 class TaskStore:
@@ -27,7 +29,7 @@ class TaskStore:
         self._init()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, timeout=10, factory=_ClosingConnection)
+        conn = sqlite3.connect(self.path, timeout=10, factory=_ClosingSQLiteConnection)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -770,7 +772,7 @@ class TaskStore:
                 "AND v.skill_name=? AND v.version=? AND (v.active=1 OR EXISTS ("
                 "SELECT 1 FROM skill_evolution_runs r WHERE r.tenant_id=v.tenant_id "
                 "AND r.skill_name=v.skill_name AND r.candidate_version=v.version "
-                "AND r.decision='activated'))",
+                "AND r.decision IN ('awaiting_approval','activated')))",
                 (tenant_id, skill_name, version),
             ).fetchone()
             if not exists:
@@ -1126,19 +1128,48 @@ class TaskStore:
             )
             error_rate = value["errors"] / value["samples"] if value["samples"] else 0.0
             if (
-                value["status"] == "running" and value["auto_promote"]
+                value["status"] == "running"
                 and value["shadow_samples"] >= value["min_samples"]
                 and disagreement_rate <= value["max_disagreement_rate"]
                 and error_rate <= value["max_error_rate"]
                 and not candidate_failed
             ):
+                # Shadow traffic is observational: satisfying the gate only makes the
+                # candidate eligible for a human promotion.  Historical auto_promote
+                # configuration is retained in the schema for compatibility but is no
+                # longer allowed to mutate the stable version.
                 conn.execute(
-                    "UPDATE deployments SET status='promoted',stable_version=candidate_version,"
-                    "canary_percent=0,shadow_percent=0,updated_at=? "
+                    "UPDATE deployments SET status='awaiting_approval',updated_at=? "
                     "WHERE tenant_id=? AND skill_name=?",
                     (utc_now(), tenant_id, skill_name),
                 )
-                value["status"] = "promoted"
+                value["status"] = "awaiting_approval"
+        return value
+
+    def approve_deployment(
+        self, tenant_id: str, skill_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Promote a shadow-qualified deployment after explicit human approval."""
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM deployments WHERE tenant_id=? AND skill_name=?",
+                (tenant_id, skill_name),
+            ).fetchone()
+            if not row:
+                return None
+            value = dict(row)
+            if value["status"] != "awaiting_approval":
+                return None
+            conn.execute(
+                "UPDATE deployments SET status='promoted',stable_version=candidate_version,"
+                "canary_percent=0,shadow_percent=0,updated_at=? "
+                "WHERE tenant_id=? AND skill_name=?",
+                (utc_now(), tenant_id, skill_name),
+            )
+            value["status"] = "promoted"
+            value["stable_version"] = value["candidate_version"]
+            value["canary_percent"] = 0
+            value["shadow_percent"] = 0
         return value
 
     def list_release_observations(

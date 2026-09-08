@@ -37,25 +37,25 @@ class ExperimentClient:
             )
         if role == "single-reviewer":
             return {"findings": []}
-        if role == "prism-lead":
+        if role == "coordinator":
             managed = json.loads(user)
             task = json.loads(managed["task"])
             if task["phase"] == "delegate":
                 return {"action": "final", "delegations": [
                     {
-                        "assignment_id": "security-1", "worker": "scope-mapper",
+                        "assignment_id": "security-1", "worker": "boundary-inspector",
                         "objective": "Review security",
                     },
                     {
                         "assignment_id": "reliability-1",
-                        "worker": "failure-hunter",
+                        "worker": "behavior-inspector",
                         "objective": "Review reliability",
                     },
                 ]}
-            if task["phase"] == "assess-workers":
+            if task["phase"] == "assess-specialists":
                 return {
                     "action": "final", "revision_requests": [],
-                    "examiner_objective": "Verify candidates",
+                    "audit_objective": "Verify candidates",
                 }
             if task["phase"] == "finalize":
                 return {
@@ -65,17 +65,15 @@ class ExperimentClient:
                     ),
                     "confidence_adjustments": [],
                 }
-        if role in {"scope-mapper", "failure-hunter"}:
+        if role in {"boundary-inspector", "behavior-inspector"}:
             return {"action": "final", "findings": []}
-        if role == "evidence-examiner":
+        if role == "evidence-auditor":
             managed = json.loads(user)
             task = json.loads(managed["task"])
             return {"action": "final", "decisions": [
                 {
-                    "finding_index": index, "decision": "verified",
-                    "reason": "Candidate evidence is sufficient.",
-                    "confidence_adjustment": 0.0,
-                    "supporting_evidence_ids": [],
+                    "finding_index": index, "accepted": True,
+                    "objections": [], "confidence_adjustment": 0.0,
                 }
                 for index, _item in enumerate(task["candidates"])
             ]}
@@ -166,8 +164,8 @@ class EvaluationExperimentTests(unittest.TestCase):
         self.assertEqual(5, len(report["arms"]))
         self.assertIn("multi_agent_vs_single_scanner", report["comparisons"])
         self.assertIn("evolved_skill_vs_full_agentic", report["comparisons"])
-        execution = report["arms"]["full-agentic"]["execution"]
-        self.assertIn("critic_acceptance_rate", execution)
+        execution = report["arms"]["routed-specialists-audited"]["execution"]
+        self.assertIn("auditor_acceptance_rate", execution)
         self.assertIn("revision_requests_per_pr", execution)
         self.assertIn("average_cost_usd_per_pr", execution)
 

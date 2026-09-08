@@ -1,4 +1,4 @@
-"""Run the single-model, scanner, multi-Agent, Critic and Skill ablations."""
+"""Run the single-model, scanner, multi-Agent, Evidence Auditor and Skill ablations."""
 import argparse
 import json
 import os
@@ -34,15 +34,15 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             "Compare a single model, a single model plus scanners, multi-Agent "
-            "review without Critic, full agentic review, and optionally full "
+            "review without Evidence Auditor, full agentic review, and optionally full "
             "agentic review with an evolved Skill."
         )
     )
     parser.add_argument("dataset", help="Human-labelled public/historical PR JSONL")
-    parser.add_argument("--base-url", default=os.getenv("EVOAGENT_LLM_BASE_URL", ""))
-    parser.add_argument("--api-key", default=os.getenv("EVOAGENT_LLM_API_KEY", ""))
-    parser.add_argument("--model", default=os.getenv("EVOAGENT_LLM_MODEL", ""))
-    parser.add_argument("--provider", default=os.getenv("EVOAGENT_LLM_PROVIDER", "custom"))
+    parser.add_argument("--base-url", default=os.getenv("TRACEREVIEW_LLM_BASE_URL", os.getenv("EVOAGENT_LLM_BASE_URL", "")))
+    parser.add_argument("--api-key", default=os.getenv("TRACEREVIEW_LLM_API_KEY", os.getenv("EVOAGENT_LLM_API_KEY", "")))
+    parser.add_argument("--model", default=os.getenv("TRACEREVIEW_LLM_MODEL", os.getenv("EVOAGENT_LLM_MODEL", "")))
+    parser.add_argument("--provider", default=os.getenv("TRACEREVIEW_LLM_PROVIDER", os.getenv("EVOAGENT_LLM_PROVIDER", "custom")))
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--token-budget", type=int, default=12000)
     parser.add_argument("--time-budget", type=int, default=240)

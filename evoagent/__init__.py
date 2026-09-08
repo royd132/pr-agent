@@ -1,3 +1,3 @@
-"""Legacy runtime package for the DiffPrism PR review service."""
+"""TraceReview implementation package (legacy ``evoagent`` namespace retained for compatibility)."""
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"

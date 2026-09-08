@@ -12,13 +12,6 @@ from .config import Settings
 from .auth import Principal
 from .github import verify_signature
 from .metrics import metrics
-from .presentation import (
-    BENCHMARK_ARM_LABELS,
-    PRODUCT_NAME,
-    PRODUCT_VERSION,
-    public_benchmark_summary,
-    synthetic_benchmark_status,
-)
 from .modes import public_taxonomy, resolve_mode
 from .report import to_markdown
 from .service import ReviewService
@@ -27,9 +20,11 @@ from .service import ReviewService
 TASK = re.compile(r"^/v1/tasks/([0-9a-f-]+)$")
 REPORT = re.compile(r"^/v1/tasks/([0-9a-f-]+)/report$")
 FIX = re.compile(r"^/v1/tasks/([0-9a-f-]+)/fix$")
+FIX_APPROVE = re.compile(r"^/v1/tasks/([0-9a-f-]+)/fix/approve$")
 FEEDBACK = re.compile(r"^/v1/tasks/([0-9a-f-]+)/feedback$")
 CANCEL = re.compile(r"^/v1/tasks/([0-9a-f-]+)/cancel$")
 RESUME = re.compile(r"^/v1/tasks/([0-9a-f-]+)/resume$")
+DEPLOYMENT_APPROVE = re.compile(r"^/v1/deployments/([A-Za-z0-9_-]+)/approve$")
 ROLLBACK = re.compile(r"^/v1/skills/([A-Za-z0-9_-]+)/versions/(\d+)/activate$")
 SKILL_ARTIFACT_VERSIONS = re.compile(r"^/v1/skill-evolution/([a-z0-9_-]+)/versions$")
 SKILL_ARTIFACT_ACTIVATE = re.compile(
@@ -41,7 +36,7 @@ WEB_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "web"))
 class ApiHandler(BaseHTTPRequestHandler):
     service: ReviewService
     settings: Settings
-    server_version = "%s/%s" % (PRODUCT_NAME, PRODUCT_VERSION)
+    server_version = "TraceReview/2.0"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         print("%s - %s" % (self.address_string(), fmt % args))
@@ -182,16 +177,6 @@ class ApiHandler(BaseHTTPRequestHandler):
                 },
             })
             return
-        if path == "/api/benchmark":
-            self._send_json(200, {
-                "dataset": synthetic_benchmark_status(),
-                "arms": BENCHMARK_ARM_LABELS,
-                "runs": [
-                    public_benchmark_summary(item)
-                    for item in self.service.store.list_evolution_runs(20)
-                ],
-            })
-            return
         if path == "/api/failures":
             if not principal.can("audit"):
                 self._send_json(403, {"error": "permission denied"})
@@ -272,7 +257,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         if path == "/github/install":
             if not self.settings.github_app_slug:
-                self._send_json(503, {"error": "DIFFPRISM_GITHUB_APP_SLUG is not configured"})
+                self._send_json(503, {"error": "EVOAGENT_GITHUB_APP_SLUG is not configured"})
                 return
             self.send_response(302)
             self.send_header("Location", "https://github.com/apps/%s/installations/new" % self.settings.github_app_slug)
@@ -410,6 +395,22 @@ class ApiHandler(BaseHTTPRequestHandler):
                     payload, delivery_id, digest
                 ))
                 return
+            match = FIX_APPROVE.match(path)
+            if match:
+                principal = self._principal("fix")
+                payload = self._read_json(body)
+                installation_id = payload.get("installation_id")
+                if installation_id is not None and not isinstance(installation_id, int):
+                    raise ValueError("installation_id must be an integer")
+                result = self.service.approve_fix(
+                    match.group(1), installation_id, principal.tenant_id
+                )
+                self.service.store.audit(
+                    principal.tenant_id, principal.username, "repair.approve",
+                    match.group(1), {"branch": result.get("branch")},
+                )
+                self._send_json(201, result)
+                return
             match = FIX.match(path)
             if match:
                 principal = self._principal("fix")
@@ -474,6 +475,18 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "llm-review", payload,
                 )
                 self._send_json(201, result)
+                return
+            match = DEPLOYMENT_APPROVE.match(path)
+            if match:
+                principal = self._principal("manage")
+                result = self.service.releases.approve(principal.tenant_id, match.group(1))
+                self.service.store.audit(
+                    principal.tenant_id, principal.username, "deployment.approve",
+                    match.group(1), {"approved": bool(result)},
+                )
+                self._send_json(200 if result else 409, {
+                    "approved": bool(result), "deployment": result,
+                })
                 return
             if path == "/v1/queue/dead-letters/replay":
                 principal = self._principal("manage")
@@ -557,7 +570,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             match = SKILL_ARTIFACT_ACTIVATE.match(path)
             if match:
                 principal = self._principal("manage")
-                ok = self.service.skill_evolution.rollback(
+                ok = self.service.skill_evolution.approve(
                     match.group(1), int(match.group(2)), principal.tenant_id
                 )
                 if ok:
@@ -571,7 +584,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             match = ROLLBACK.match(path)
             if match:
                 self._principal("manage")
-                ok = self.service.evolution.rollback(match.group(1), int(match.group(2)))
+                ok = self.service.evolution.approve(match.group(1), int(match.group(2)))
                 if ok:
                     self.service.reload_skills()
                 self._send_json(200 if ok else 404, {"activated": ok})
@@ -591,7 +604,7 @@ def run() -> None:
     service = ReviewService(settings)
     handler = type("ConfiguredApiHandler", (ApiHandler,), {"service": service, "settings": settings})
     server = ThreadingHTTPServer((settings.host, settings.port), handler)
-    print("%s dashboard: http://%s:%d" % (PRODUCT_NAME, settings.host, settings.port))
+    print("TraceReview dashboard: http://%s:%d" % (settings.host, settings.port))
     print("Persistence: %s | Queue: %s | Orchestrator: %s" % (
         "postgresql" if settings.database_url else "sqlite", service.queue.backend, service.reviewer.name
     ))

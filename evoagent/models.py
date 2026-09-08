@@ -54,10 +54,13 @@ class Finding:
     # Canonical taxonomy used for evaluation.  rule_id remains an internal or
     # reviewer-specific label and is not required to be stable across models.
     cwe: Optional[str] = None
-    trigger: str = ""
+    # Business-facing evidence contract. These fields are optional for legacy
+    # deterministic rules, but high/critical model findings are expected to
+    # explain the precondition and impact before they can pass the release gate.
+    category: str = "general"
+    precondition: str = ""
     impact: str = ""
-    verification: str = "unverified"
-    examiner_reason: str = ""
+    evidence_strength: str = "unrated"
 
     def to_dict(self) -> Dict[str, Any]:
         value = asdict(self)
@@ -78,8 +81,6 @@ class ReviewReport:
     run_mode: Dict[str, Any] = field(default_factory=dict)
     components: List[Dict[str, Any]] = field(default_factory=list)
     execution: Dict[str, Any] = field(default_factory=dict)
-    change_map: Dict[str, Any] = field(default_factory=dict)
-    verdict: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -94,8 +95,6 @@ class ReviewReport:
             "run_mode": self.run_mode,
             "components": self.components,
             "execution": self.execution,
-            "change_map": self.change_map,
-            "verdict": self.verdict,
         }
 
 
